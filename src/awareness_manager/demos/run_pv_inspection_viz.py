@@ -21,7 +21,8 @@ from awareness_manager.awareness_manager import AwarenessManager
 from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
 from awareness_manager.visualizer import KBVisualizer
 
-_OBSERVATION_INTERVAL = 2.0
+_REFRESH_INTERVAL = 2.0    # real seconds between observations (observation cadence)
+_FORMULA3_INTERVAL = 10.0  # simulated seconds each observation compensates for (Formula 3)
 
 
 def main() -> None:
@@ -29,8 +30,8 @@ def main() -> None:
     am = AwarenessManager(
         kb,
         goal_id='inspect_pv_field',
-        budget=1,
-        observation_interval=_OBSERVATION_INTERVAL,
+        budget=2,
+        observation_interval=_FORMULA3_INTERVAL,
     )
     viz = KBVisualizer(
         kb,
@@ -38,7 +39,7 @@ def main() -> None:
         sim_interval=0.1,
         frame_interval=0.1,
         awareness_manager=am,
-        refresh_interval=_OBSERVATION_INTERVAL,
+        refresh_interval=_REFRESH_INTERVAL,
         highlight_duration=1.5,
     )
 

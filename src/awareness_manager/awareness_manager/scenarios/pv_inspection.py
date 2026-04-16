@@ -44,7 +44,7 @@ def build_pv_inspection_kb() -> KnowledgeBase:
     # --- Physical plant ---
     kb.add_concept(Concept('solar_panel',       'object',   decay_rate=0.001))
     kb.add_concept(Concept('panel_row',         'location', decay_rate=0.001))
-    kb.add_concept(Concept('landing_zone',      'location', decay_rate=0.005))
+    kb.add_concept(Concept('landing_zone',      'location', decay_rate=0.02))
 
     # --- Drone subsystems ---
     kb.add_concept(Concept('drone_camera',      'object',   decay_rate=0.01))

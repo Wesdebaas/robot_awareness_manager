@@ -84,9 +84,9 @@ class KBVisualizer:
         self._last_refresh_time = time.time()
         self._last_schedule: list[str] = []
 
-        # Highlight state: node being displayed with the yellow ring + expiry time
-        self._highlighted: str | None = None
-        self._highlight_until: float = 0.0
+        # Highlight state: maps concept_id → expiry timestamp for the yellow ring.
+        # Supports multiple simultaneous highlights (budget > 1).
+        self._highlighted: dict[str, float] = {}
 
         # Fix layout positions once so the graph does not jump between frames
         self._pos = nx.spring_layout(kb._graph, seed=42)
@@ -173,18 +173,17 @@ class KBVisualizer:
     # ------------------------------------------------------------------
 
     def _do_scheduled_refresh(self, now: float) -> None:
-        target = self._last_schedule[0]
-        before = self._kb.get_concept(target).epistemic_error
-        if self._am is not None:
-            refresh_used = self._am.observe(target)
-        else:
-            self._kb.refresh_concept(target, refresh=0.4)
-            refresh_used = 0.4
-        after = self._kb.get_concept(target).epistemic_error
         self._last_refresh_time = now
-        self._highlighted = target
-        self._highlight_until = now + self._highlight_duration
-        print(f"[OBS   ]  '{target}'  E: {before:.3f} → {after:.3f}  (refresh={refresh_used:.3f})")
+        for target in self._last_schedule:
+            before = self._kb.get_concept(target).epistemic_error
+            if self._am is not None:
+                refresh_used = self._am.observe(target)
+            else:
+                self._kb.refresh_concept(target, refresh=0.4)
+                refresh_used = 0.4
+            after = self._kb.get_concept(target).epistemic_error
+            self._highlighted[target] = now + self._highlight_duration
+            print(f"[OBS   ]  '{target}'  E: {before:.3f} → {after:.3f}  (refresh={refresh_used:.3f})")
 
     # ------------------------------------------------------------------
     # Drawing
@@ -256,19 +255,22 @@ class KBVisualizer:
             alpha=0.92,
         )
 
-        # Highlight ring: fading yellow circle drawn over the last-refreshed node
+        # Highlight rings: fading yellow circle over each recently-refreshed node
         now = time.time()
-        if self._highlighted and now < self._highlight_until:
-            remaining = self._highlight_until - now
+        for cid, expiry in list(self._highlighted.items()):
+            if now >= expiry:
+                del self._highlighted[cid]
+                continue
+            remaining = expiry - now
             alpha = remaining / self._highlight_duration
             hi_size = (
                 _NODE_SIZE_MIN
-                + (_NODE_SIZE_MAX - _NODE_SIZE_MIN) * self._attention.get(self._highlighted, 0.0)
+                + (_NODE_SIZE_MAX - _NODE_SIZE_MIN) * self._attention.get(cid, 0.0)
                 + _HIGHLIGHT_SIZE_BONUS
             )
             nx.draw_networkx_nodes(
                 graph, self._pos, ax=self._ax_graph,
-                nodelist=[self._highlighted],
+                nodelist=[cid],
                 node_color=_HIGHLIGHT_COLOR,
                 node_size=hi_size,
                 alpha=alpha,
@@ -344,8 +346,7 @@ class KBVisualizer:
             before = concept.epistemic_error
             self._kb.refresh_concept(clicked, refresh=0.5)
             after = concept.epistemic_error
-            self._highlighted = clicked
-            self._highlight_until = time.time() + self._highlight_duration
+            self._highlighted[clicked] = time.time() + self._highlight_duration
             print(f"[MANUAL]  '{clicked}'  E: {before:.3f} → {after:.3f}")
 
         self._draw_graph()

@@ -20,7 +20,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('goal_id',              default_value='inspect_pv_field', description='Initial mission goal'),
         DeclareLaunchArgument('alpha',                default_value='0.5',              description='Spreading activation decay factor'),
         DeclareLaunchArgument('max_distance',         default_value='4.0',              description='Max weighted graph distance'),
-        DeclareLaunchArgument('budget',               default_value='1',                description='Max concepts scheduled per tick'),
+        DeclareLaunchArgument('budget',               default_value='2',                description='Max concepts scheduled per tick'),
         DeclareLaunchArgument('tick_rate',            default_value='10.0',             description='Simulation tick rate (Hz)'),
         DeclareLaunchArgument('observation_interval', default_value='2.0',              description='Seconds between auto-observations'),
     ]
