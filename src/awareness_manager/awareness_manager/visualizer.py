@@ -47,6 +47,10 @@ class KBVisualizer:
     When awareness_manager and refresh_interval are both provided the visualizer
     automatically refreshes the top-priority concept on that cadence and draws a
     fading yellow ring around it to make the observation visible.
+
+    Performance: static elements (edges, edge labels) are drawn once at startup.
+    Per-frame updates only touch node colors, node sizes, label text strings, and
+    highlight ring alphas — all via in-place artist mutations, no ax.clear().
     """
 
     def __init__(
@@ -83,9 +87,14 @@ class KBVisualizer:
         self._last_tick_time = time.time()
         self._last_refresh_time = time.time()
         self._last_schedule: list[str] = []
+        self._dirty = True   # redraw only when state actually changed
+
+        # Perf counters — printed every 30 dirty redraws
+        self._perf_frames = 0
+        self._perf_artist_ms = 0.0
+        self._perf_render_ms = 0.0
 
         # Highlight state: maps concept_id → expiry timestamp for the yellow ring.
-        # Supports multiple simultaneous highlights (budget > 1).
         self._highlighted: dict[str, float] = {}
 
         # Fix layout positions once so the graph does not jump between frames
@@ -93,6 +102,7 @@ class KBVisualizer:
 
         self._setup_figure()
         self._recompute_attention()
+        self._setup_artists()
 
     # ------------------------------------------------------------------
     # Figure setup
@@ -105,10 +115,7 @@ class KBVisualizer:
         # Left panel: graph (wide)
         self._ax_graph = self._fig.add_axes([0.01, 0.05, 0.72, 0.90])
         self._ax_graph.set_facecolor('#1e1e2e')
-        self._ax_graph.set_title(
-            'Robot Awareness — Knowledge Graph',
-            color='white', fontsize=13, pad=10
-        )
+        self._ax_graph.axis('off')
 
         # Right panel: RadioButtons for goal selection
         self._ax_radio = self._fig.add_axes([0.76, 0.25, 0.22, 0.55])
@@ -121,7 +128,6 @@ class KBVisualizer:
             active=concept_ids.index(self._goal_id) if self._goal_id in concept_ids else 0,
         )
         self._radio.on_clicked(self._on_radio_select)
-        # Style radio button labels
         for label in self._radio.labels:
             label.set_color('white')
             label.set_fontsize(9)
@@ -129,6 +135,96 @@ class KBVisualizer:
 
         # Click handler for node interaction
         self._fig.canvas.mpl_connect('button_press_event', self._on_click)
+
+    def _setup_artists(self) -> None:
+        """
+        Draw static elements once and create persistent artist handles.
+
+        Static (drawn once, never updated):
+            - Edges with widths proportional to 1/weight²
+            - Edge weight labels
+
+        Dynamic (handles kept, data updated in-place each frame):
+            - Node collection  : colors (E) and sizes (A) change every tick
+            - Label Text objects: E and A values in the text change every tick
+            - Highlight PathCollections: one per node, alpha toggled on observe
+        """
+        graph = self._kb._graph
+        concept_ids = self._kb.concept_ids()
+
+        # --- Static: title (updated in-place via set_text, never cleared) ---
+        self._title = self._ax_graph.set_title(
+            f'Robot Awareness — Knowledge Graph    '
+            f'[t={self._elapsed:5.1f}s  goal: {self._goal_id}]',
+            color='white', fontsize=11, pad=8,
+        )
+
+        # --- Static: edges (weights never change) ---
+        edge_widths = [
+            _EDGE_WIDTH_SCALE / (graph[u][v]['weight'] ** 2)
+            for u, v in graph.edges()
+        ]
+        nx.draw_networkx_edges(
+            graph, self._pos, ax=self._ax_graph,
+            width=edge_widths, edge_color='#888888', alpha=0.6,
+        )
+
+        # --- Static: edge weight labels ---
+        edge_labels = {
+            (u, v): f"{graph[u][v]['weight']:.1f}"
+            for u, v in graph.edges()
+        }
+        nx.draw_networkx_edge_labels(
+            graph, self._pos, edge_labels=edge_labels, ax=self._ax_graph,
+            font_size=7, font_color='#cccccc', bbox=dict(alpha=0),
+        )
+
+        # --- Dynamic: node collection (colors + sizes updated each frame) ---
+        node_colors = [
+            _CMAP(self._kb.get_concept(cid).epistemic_error)
+            for cid in concept_ids
+        ]
+        node_sizes = [
+            _NODE_SIZE_MIN + (_NODE_SIZE_MAX - _NODE_SIZE_MIN) * self._attention.get(cid, 0.0)
+            for cid in concept_ids
+        ]
+        self._node_collection = nx.draw_networkx_nodes(
+            graph, self._pos, ax=self._ax_graph,
+            nodelist=concept_ids,
+            node_color=node_colors,
+            node_size=node_sizes,
+            alpha=0.92,
+        )
+        # Store the node order so _draw_graph updates the right indices
+        self._concept_ids = concept_ids
+
+        # --- Dynamic: highlight rings (one PathCollection per node, alpha=0 by default) ---
+        self._highlight_collections: dict[str, object] = {}
+        for cid in concept_ids:
+            coll = nx.draw_networkx_nodes(
+                graph, self._pos, ax=self._ax_graph,
+                nodelist=[cid],
+                node_color=_HIGHLIGHT_COLOR,
+                node_size=_NODE_SIZE_MIN,
+                alpha=0.0,
+            )
+            self._highlight_collections[cid] = coll
+
+        # --- Dynamic: node label Text objects (text updated each frame) ---
+        self._label_texts: dict[str, plt.Text] = {}
+        for cid in concept_ids:
+            x, y = self._pos[cid]
+            txt = self._ax_graph.text(
+                x, y,
+                f"{cid}\nE={self._kb.get_concept(cid).epistemic_error:.2f}  "
+                f"A={self._attention.get(cid, 0.0):.2f}",
+                ha='center', va='center',
+                fontsize=8, color='white', fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#1e1e2e',
+                          alpha=0.6, edgecolor='none'),
+                zorder=5,
+            )
+            self._label_texts[cid] = txt
 
     # ------------------------------------------------------------------
     # Animation
@@ -148,14 +244,23 @@ class KBVisualizer:
     def _frame(self, _frame_number) -> None:
         now = time.time()
 
-        # --- Simulation tick ---
-        if now - self._last_tick_time >= self._sim_interval:
+        # --- Simulation ticks: drain all accumulated ticks in one frame pass.
+        #     Using += sim_interval (not = now) keeps timing precise if a frame
+        #     fires late — no ticks are silently skipped.
+        while now - self._last_tick_time >= self._sim_interval:
             if self._am is not None:
                 self._last_schedule = self._am.tick(dt=self._sim_interval)
+                # Sync goal if the mission queue auto-promoted a new goal
+                if self._am.goal_id != self._goal_id:
+                    self._goal_id = self._am.goal_id
+                    labels = [lbl.get_text() for lbl in self._radio.labels]
+                    if self._goal_id in labels:
+                        self._radio.set_active(labels.index(self._goal_id))
             else:
                 self._kb.tick(dt=self._sim_interval)
             self._elapsed += self._sim_interval
-            self._last_tick_time = now
+            self._last_tick_time += self._sim_interval
+            self._dirty = True
             self._print_terminal()
 
         # --- Auto-refresh: one observation every refresh_interval real seconds ---
@@ -164,9 +269,33 @@ class KBVisualizer:
                 and self._last_schedule
                 and now - self._last_refresh_time >= self._refresh_interval):
             self._do_scheduled_refresh(now)
+            self._dirty = True
 
-        self._recompute_attention()
-        self._draw_graph()
+        # --- Expiring highlights need one final redraw after they clear ---
+        if self._highlighted:
+            self._dirty = True
+
+        if self._dirty:
+            self._recompute_attention()
+            t0 = time.perf_counter()
+            self._draw_graph()          # artist data updates (Python side)
+            t1 = time.perf_counter()
+            self._fig.canvas.draw()     # synchronous render (backend side)
+            t2 = time.perf_counter()
+            self._dirty = False
+
+            self._perf_artist_ms += (t1 - t0) * 1000
+            self._perf_render_ms += (t2 - t1) * 1000
+            self._perf_frames += 1
+            if self._perf_frames >= 30:
+                print(
+                    f"[PERF  ]  artist={self._perf_artist_ms/self._perf_frames:.1f}ms  "
+                    f"render={self._perf_render_ms/self._perf_frames:.1f}ms  "
+                    f"(avg over {self._perf_frames} redraws)"
+                )
+                self._perf_frames = 0
+                self._perf_artist_ms = 0.0
+                self._perf_render_ms = 0.0
 
     # ------------------------------------------------------------------
     # Scheduled observation
@@ -186,105 +315,65 @@ class KBVisualizer:
             print(f"[OBS   ]  '{target}'  E: {before:.3f} → {after:.3f}  (refresh={refresh_used:.3f})")
 
     # ------------------------------------------------------------------
-    # Drawing
+    # Drawing — in-place artist updates, no ax.clear()
     # ------------------------------------------------------------------
 
     def _recompute_attention(self) -> None:
-        try:
-            self._attention = self._kb.compute_attention(self._goal_id)
-        except ValueError:
-            self._attention = {}
+        if self._am is not None:
+            # Use the AM's already-computed blended attention (Formulas 1+2).
+            self._attention = self._am.attention()
+        else:
+            try:
+                self._attention = self._kb.compute_attention(self._goal_id)
+            except ValueError:
+                self._attention = {}
 
     def _draw_graph(self) -> None:
-        self._ax_graph.clear()
-        self._ax_graph.set_facecolor('#1e1e2e')
-        self._ax_graph.set_title(
+        # --- Title ---
+        self._title.set_text(
             f'Robot Awareness — Knowledge Graph    '
-            f'[t={self._elapsed:5.1f}s  goal: {self._goal_id}]',
-            color='white', fontsize=11, pad=8
+            f'[t={self._elapsed:5.1f}s  goal: {self._goal_id}]'
         )
-        self._ax_graph.axis('off')
 
-        graph = self._kb._graph
-        concept_ids = self._kb.concept_ids()
-
-        # Node colors from epistemic error
+        # --- Node colors and sizes ---
         node_colors = [
             _CMAP(self._kb.get_concept(cid).epistemic_error)
-            for cid in concept_ids
+            for cid in self._concept_ids
         ]
-
-        # Node sizes from attention
         node_sizes = [
             _NODE_SIZE_MIN + (_NODE_SIZE_MAX - _NODE_SIZE_MIN) * self._attention.get(cid, 0.0)
-            for cid in concept_ids
+            for cid in self._concept_ids
         ]
+        self._node_collection.set_facecolor(node_colors)
+        self._node_collection.set_sizes(node_sizes)
 
-        # Edge widths: scale / weight² gives much stronger contrast than
-        # scale / weight. weight=1.0 → 4.0px, weight=1.5 → 1.78px, weight=2.0 → 1.0px
-        edge_widths = [
-            _EDGE_WIDTH_SCALE / (graph[u][v]['weight'] ** 2)
-            for u, v in graph.edges()
-        ]
-
-        # Node labels with live values
-        labels = {
-            cid: (
+        # --- Node label text ---
+        for cid in self._concept_ids:
+            self._label_texts[cid].set_text(
                 f"{cid}\n"
                 f"E={self._kb.get_concept(cid).epistemic_error:.2f}  "
                 f"A={self._attention.get(cid, 0.0):.2f}"
             )
-            for cid in concept_ids
-        }
 
-        # Edge weight labels (semantic distance value on each edge)
-        edge_labels = {
-            (u, v): f"{graph[u][v]['weight']:.1f}"
-            for u, v in graph.edges()
-        }
-
-        nx.draw_networkx_edges(
-            graph, self._pos, ax=self._ax_graph,
-            width=edge_widths, edge_color='#888888', alpha=0.6,
-        )
-        nx.draw_networkx_nodes(
-            graph, self._pos, ax=self._ax_graph,
-            nodelist=concept_ids,
-            node_color=node_colors,
-            node_size=node_sizes,
-            alpha=0.92,
-        )
-
-        # Highlight rings: fading yellow circle over each recently-refreshed node
+        # --- Highlight rings ---
         now = time.time()
-        for cid, expiry in list(self._highlighted.items()):
-            if now >= expiry:
-                del self._highlighted[cid]
-                continue
-            remaining = expiry - now
-            alpha = remaining / self._highlight_duration
-            hi_size = (
-                _NODE_SIZE_MIN
-                + (_NODE_SIZE_MAX - _NODE_SIZE_MIN) * self._attention.get(cid, 0.0)
-                + _HIGHLIGHT_SIZE_BONUS
-            )
-            nx.draw_networkx_nodes(
-                graph, self._pos, ax=self._ax_graph,
-                nodelist=[cid],
-                node_color=_HIGHLIGHT_COLOR,
-                node_size=hi_size,
-                alpha=alpha,
-            )
-
-        nx.draw_networkx_labels(
-            graph, self._pos, labels=labels, ax=self._ax_graph,
-            font_size=8, font_color='white', font_weight='bold',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='#1e1e2e', alpha=0.6, edgecolor='none'),
-        )
-        nx.draw_networkx_edge_labels(
-            graph, self._pos, edge_labels=edge_labels, ax=self._ax_graph,
-            font_size=7, font_color='#cccccc', bbox=dict(alpha=0),
-        )
+        for cid, coll in self._highlight_collections.items():
+            if cid in self._highlighted:
+                expiry = self._highlighted[cid]
+                if now >= expiry:
+                    del self._highlighted[cid]
+                    coll.set_alpha(0.0)
+                else:
+                    remaining = expiry - now
+                    hi_size = (
+                        _NODE_SIZE_MIN
+                        + (_NODE_SIZE_MAX - _NODE_SIZE_MIN) * self._attention.get(cid, 0.0)
+                        + _HIGHLIGHT_SIZE_BONUS
+                    )
+                    coll.set_sizes([hi_size])
+                    coll.set_alpha(remaining / self._highlight_duration)
+            else:
+                coll.set_alpha(0.0)
 
         self._fig.canvas.draw_idle()
 
@@ -301,9 +390,14 @@ class KBVisualizer:
             for cid, a in top
         )
         schedule_str = ''
+        queue_str = ''
         if self._am is not None:
             schedule_str = f"  → schedule: {self._last_schedule}"
-        print(f"[t={self._elapsed:6.1f}s]  goal={self._goal_id:<20}  {parts}{schedule_str}")
+            queue = self._am.mission_queue
+            if queue:
+                queue_parts = ', '.join(f"{gid}(Δt={eta:.1f}s)" for gid, eta in queue)
+                queue_str = f"  | queue: [{queue_parts}]"
+        print(f"[t={self._elapsed:6.1f}s]  goal={self._goal_id:<20}  {parts}{schedule_str}{queue_str}")
 
     # ------------------------------------------------------------------
     # Interaction
@@ -315,6 +409,7 @@ class KBVisualizer:
             self._am.set_goal(label)
         self._recompute_attention()
         self._draw_graph()
+        self._fig.canvas.draw_idle()
         print(f"[GOAL  ]  Mission changed → '{label}'")
 
     def _on_click(self, event) -> None:
@@ -336,7 +431,6 @@ class KBVisualizer:
             if self._am is not None:
                 self._am.set_goal(clicked)
             self._recompute_attention()
-            # Sync RadioButtons selection
             labels = [lbl.get_text() for lbl in self._radio.labels]
             if clicked in labels:
                 self._radio.set_active(labels.index(clicked))
@@ -350,6 +444,7 @@ class KBVisualizer:
             print(f"[MANUAL]  '{clicked}'  E: {before:.3f} → {after:.3f}")
 
         self._draw_graph()
+        self._fig.canvas.draw_idle()
 
     def _nearest_node(self, x: float, y: float) -> str | None:
         """Return the concept_id of the closest node within _HIT_RADIUS, or None."""

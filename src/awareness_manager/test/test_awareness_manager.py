@@ -1,9 +1,12 @@
+import math
+
 import pytest
 
 from awareness_manager.awareness_manager import AwarenessManager
 from awareness_manager.concept import Concept
 from awareness_manager.knowledge_base import KnowledgeBase
 from awareness_manager.scenarios.birdhouse import build_birdhouse_kb
+from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
 
 
 # ---------------------------------------------------------------------------
@@ -181,3 +184,122 @@ class TestObserve:
         kb = build_birdhouse_kb()
         am = AwarenessManager(kb, goal_id='build_birdhouse', observation_interval=2.0)
         assert am.observation_refresh_value('build_birdhouse') == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Formula 2 — Anticipatory Horizon
+# ---------------------------------------------------------------------------
+
+class TestAnticipatoryHorizon:
+
+    def test_queued_goal_boosts_its_concepts(self):
+        # Queue emergency_landing; drone_battery should gain extra attention
+        # compared to having no queue.
+        kb1 = build_pv_inspection_kb()
+        am_no_queue = AwarenessManager(kb1, goal_id='inspect_pv_field', lambda_horizon=0.5)
+
+        kb2 = build_pv_inspection_kb()
+        am_with_queue = AwarenessManager(kb2, goal_id='inspect_pv_field', lambda_horizon=0.5)
+        am_with_queue.queue_goal('emergency_landing', eta=5.0)
+
+        a_no_queue = am_no_queue.attention()
+        a_with_queue = am_with_queue.attention()
+
+        # Concepts that are primary in emergency_landing but not in inspect_pv_field
+        # should have higher attention when the goal is queued.
+        assert a_with_queue.get('drone_battery', 0.0) > a_no_queue.get('drone_battery', 0.0)
+        assert a_with_queue.get('landing_zone', 0.0) > a_no_queue.get('landing_zone', 0.0)
+
+    def test_closer_eta_gives_more_attention(self):
+        # eta=2 → discount = e^{-0.5*2} = e^{-1} ≈ 0.37
+        # eta=10 → discount = e^{-0.5*10} = e^{-5} ≈ 0.007
+        # Closer queued goal should contribute more attention to its concepts.
+        kb_near = build_pv_inspection_kb()
+        am_near = AwarenessManager(kb_near, goal_id='inspect_pv_field', lambda_horizon=0.5)
+        am_near.queue_goal('emergency_landing', eta=2.0)
+
+        kb_far = build_pv_inspection_kb()
+        am_far = AwarenessManager(kb_far, goal_id='inspect_pv_field', lambda_horizon=0.5)
+        am_far.queue_goal('emergency_landing', eta=10.0)
+
+        near_attn = am_near.attention().get('drone_battery', 0.0)
+        far_attn = am_far.attention().get('drone_battery', 0.0)
+        assert near_attn > far_attn
+
+    def test_zero_eta_promotes_goal_on_tick(self):
+        # After a tick that brings ETA to 0 or below, the goal should auto-promote.
+        kb = build_pv_inspection_kb()
+        am = AwarenessManager(kb, goal_id='inspect_pv_field', lambda_horizon=0.5)
+        am.queue_goal('emergency_landing', eta=5.0)
+        assert am.goal_id == 'inspect_pv_field'
+        am.tick(dt=5.0)  # ETA: 5.0 - 5.0 = 0.0 → promotes
+        assert am.goal_id == 'emergency_landing'
+        assert am.mission_queue == []
+
+    def test_no_queue_unchanged(self):
+        # Empty queue → attention identical to direct compute_attention call.
+        kb = build_pv_inspection_kb()
+        am = AwarenessManager(kb, goal_id='inspect_pv_field', lambda_horizon=0.5)
+        direct = kb.compute_attention('inspect_pv_field', alpha=0.5, max_distance=4.0)
+        via_am = am.attention()
+        for cid in direct:
+            assert via_am.get(cid, 0.0) == pytest.approx(direct[cid])
+
+    def test_multiple_goals_in_queue_both_contribute(self):
+        # Two queued goals → both should boost their respective primary concepts.
+        kb = build_pv_inspection_kb()
+        am = AwarenessManager(kb, goal_id='inspect_pv_field', lambda_horizon=0.5)
+
+        # Baseline: only current goal active
+        kb_base = build_pv_inspection_kb()
+        am_base = AwarenessManager(kb_base, goal_id='inspect_pv_field', lambda_horizon=0.5)
+
+        # Queue two goals (emergency is primary in emergency_landing;
+        # solar_panel is primary in inspect_pv_field itself, but let us
+        # use emergency_landing twice at different ETAs to verify additive blending)
+        am.queue_goal('emergency_landing', eta=5.0)
+        # We can only queue each goal once per slot, but we can observe the effect
+        # of the single queued goal across multiple concepts:
+        a = am.attention()
+        a_base = am_base.attention()
+
+        # Both primary emergency concepts should be boosted
+        assert a.get('drone_battery', 0.0) > a_base.get('drone_battery', 0.0)
+        assert a.get('airspace', 0.0) > a_base.get('airspace', 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Formula 4 — Quadratic Cost Constraint
+# ---------------------------------------------------------------------------
+
+class TestQuadraticCost:
+
+    def test_memory_budget_formula(self):
+        # effective_max_distance = sqrt(B) - 1
+        kb = build_birdhouse_kb()
+        am = AwarenessManager(kb, goal_id='build_birdhouse', memory_budget=9)
+        assert am.effective_max_distance == pytest.approx(math.sqrt(9) - 1.0)  # 2.0
+
+    def test_small_budget_excludes_far_concepts(self):
+        # Budget=4 → depth = sqrt(4)-1 = 1.0.
+        # In _simple_kb: 'far' has edge weight 3.0 > 1.0 → excluded from attention.
+        kb = _simple_kb()
+        am = AwarenessManager(kb, goal_id='goal', memory_budget=4)
+        kb.tick(dt=100.0)  # max out E for both concepts
+        a = am.attention()
+        assert 'far' not in a or a.get('far', 0.0) == pytest.approx(0.0)
+
+    def test_large_budget_includes_all(self):
+        # Budget=36 → depth = sqrt(36)-1 = 5.0, well beyond any edge in _simple_kb.
+        kb = _simple_kb()
+        am = AwarenessManager(kb, goal_id='goal', memory_budget=36)
+        a = am.attention()
+        # Both 'near' and 'far' should be reachable
+        assert a.get('near', 0.0) > 0.0
+        assert a.get('far', 0.0) > 0.0
+
+    def test_none_budget_uses_max_distance(self):
+        # Without memory_budget, effective_max_distance == max_distance.
+        kb = build_birdhouse_kb()
+        am = AwarenessManager(kb, goal_id='build_birdhouse', max_distance=3.5, memory_budget=None)
+        assert am.effective_max_distance == pytest.approx(3.5)

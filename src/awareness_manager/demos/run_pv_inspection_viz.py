@@ -32,12 +32,18 @@ def main() -> None:
         goal_id='inspect_pv_field',
         budget=2,
         observation_interval=_FORMULA3_INTERVAL,
+        lambda_horizon=0.1,   # gentle anticipatory slope over 30 simulated seconds
     )
+    # Formula 2: queue emergency_landing 30 simulated seconds from now.
+    # With sim_interval=0.1, 30 sim-seconds = 300 real-world ticks ≈ 30 real seconds.
+    # Watch drone_battery and landing_zone nodes slowly grow during inspection.
+    am.queue_goal('emergency_landing', eta=30.0)
+
     viz = KBVisualizer(
         kb,
         goal_id='inspect_pv_field',
-        sim_interval=0.1,
-        frame_interval=0.1,
+        sim_interval=0.1,    # simulation advances 0.1 sim-s per tick (10 Hz)
+        frame_interval=0.15, # render at ~7 fps — matched to Qt backend render cost (~135ms)
         awareness_manager=am,
         refresh_interval=_REFRESH_INTERVAL,
         highlight_duration=1.5,
@@ -45,8 +51,9 @@ def main() -> None:
 
     print("=" * 70)
     print("  Robot Awareness — PV Inspection Demo  (CoreSense D7.1)")
-    print("  Goal: inspect_pv_field → switch to emergency_landing")
-    print("  Watch node sizes reshuffle when the goal changes.")
+    print("  Goal: inspect_pv_field → emergency_landing queued at t=30s")
+    print("  Formula 2: watch battery/landing nodes grow as ETA approaches 0.")
+    print("  Formula 4: attention depth bounded by memory budget (default off).")
     print("=" * 70)
 
     viz.start()
