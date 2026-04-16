@@ -3,6 +3,7 @@ import pytest
 from awareness_manager.concept import Concept
 from awareness_manager.knowledge_base import KnowledgeBase
 from awareness_manager.scenarios.birdhouse import build_birdhouse_kb
+from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
 
 
 class TestKnowledgeBaseConstruction:
@@ -28,6 +29,23 @@ class TestKnowledgeBaseConstruction:
         kb = build_birdhouse_kb()
         assert len(kb) == 10  # task + 3 tools + 2 fasteners + 1 material + 2 locations + 1 human
         assert 'build_birdhouse' in kb.concept_ids()
+
+    def test_pv_inspection_scenario_loads(self):
+        kb = build_pv_inspection_kb()
+        assert len(kb) == 11  # 2 tasks + 3 plant + 3 drone + 3 environment
+        assert 'inspect_pv_field' in kb.concept_ids()
+        assert 'emergency_landing' in kb.concept_ids()
+
+    def test_pv_inspection_goal_switch_reshuffles_attention(self):
+        # The key thesis demo: switching from inspection to emergency changes
+        # which concepts get the most attention.
+        kb = build_pv_inspection_kb()
+        a_inspect  = kb.compute_attention('inspect_pv_field',  alpha=0.5)
+        a_emergency = kb.compute_attention('emergency_landing', alpha=0.5)
+        # solar_panel is close to inspect goal, far/absent from emergency
+        assert a_inspect.get('solar_panel', 0.0) > a_emergency.get('solar_panel', 0.0)
+        # drone_battery is close to emergency goal, peripheral during inspection
+        assert a_emergency.get('drone_battery', 0.0) > a_inspect.get('drone_battery', 0.0)
 
 
 class TestSpreadingActivation:

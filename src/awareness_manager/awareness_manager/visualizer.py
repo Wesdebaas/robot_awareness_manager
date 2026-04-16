@@ -1,5 +1,6 @@
 import math
 import time
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -7,6 +8,9 @@ from matplotlib.widgets import RadioButtons
 import networkx as nx
 
 from awareness_manager.knowledge_base import KnowledgeBase
+
+if TYPE_CHECKING:
+    from awareness_manager.awareness_manager import AwarenessManager
 
 
 # --- Visual constants --------------------------------------------------------
@@ -16,6 +20,8 @@ _NODE_SIZE_MAX = 2000       # size for the goal node (attention = 1.0)
 _EDGE_WIDTH_SCALE = 4.0     # base numerator for width = scale / weight²
 _HIT_RADIUS = 0.15          # graph-coordinate radius for click detection
 _CMAP = plt.cm.RdYlGn_r     # green=fresh (E=0), red=stale (E=1)
+_HIGHLIGHT_COLOR = '#ffdd00' # yellow ring drawn over a just-refreshed node
+_HIGHLIGHT_SIZE_BONUS = 600  # extra node size for the highlight ring
 
 
 class KBVisualizer:
@@ -37,6 +43,10 @@ class KBVisualizer:
         Click a non-task node  → refresh it (simulate an observation, E drops)
         Click a task node      → set it as the new goal
         RadioButtons panel     → switch active goal from a list
+
+    When awareness_manager and refresh_interval are both provided the visualizer
+    automatically refreshes the top-priority concept on that cadence and draws a
+    fading yellow ring around it to make the observation visible.
     """
 
     def __init__(
@@ -45,22 +55,38 @@ class KBVisualizer:
         goal_id: str,
         sim_interval: float = 1.0,
         frame_interval: float = 0.1,
+        awareness_manager: "AwarenessManager | None" = None,
+        refresh_interval: float | None = None,
+        highlight_duration: float = 1.5,
     ) -> None:
         """
         Args:
-            sim_interval:   Simulated time (seconds) that passes per tick.
-                            Controls how fast epistemic error grows.
-            frame_interval: Real time (seconds) between visual redraws.
-                            Decoupled from sim_interval so the graph can
-                            update smoothly without speeding up the simulation.
+            sim_interval:       Simulated time (seconds) that passes per real tick.
+            frame_interval:     Real time (seconds) between visual redraws.
+            awareness_manager:  Optional AM; when set, tick delegates to am.tick()
+                                and observations are executed via am.observe()
+                                (Formula 3 refresh values).
+            refresh_interval:   Real seconds between automatic observations.
+                                None disables auto-refresh (manual clicks only).
+            highlight_duration: Seconds the yellow ring stays visible after a refresh.
         """
         self._kb = kb
         self._goal_id = goal_id
         self._sim_interval = sim_interval
         self._frame_interval = frame_interval
+        self._am = awareness_manager
+        self._refresh_interval = refresh_interval
+        self._highlight_duration = highlight_duration
+
         self._elapsed = 0.0
         self._attention: dict[str, float] = {}
         self._last_tick_time = time.time()
+        self._last_refresh_time = time.time()
+        self._last_schedule: list[str] = []
+
+        # Highlight state: node being displayed with the yellow ring + expiry time
+        self._highlighted: str | None = None
+        self._highlight_until: float = 0.0
 
         # Fix layout positions once so the graph does not jump between frames
         self._pos = nx.spring_layout(kb._graph, seed=42)
@@ -120,16 +146,45 @@ class KBVisualizer:
         plt.show()
 
     def _frame(self, _frame_number) -> None:
-        """Called every frame_interval ms. Ticks the simulation only when
-        sim_interval real seconds have elapsed since the last tick."""
         now = time.time()
+
+        # --- Simulation tick ---
         if now - self._last_tick_time >= self._sim_interval:
-            self._kb.tick(dt=self._sim_interval)
+            if self._am is not None:
+                self._last_schedule = self._am.tick(dt=self._sim_interval)
+            else:
+                self._kb.tick(dt=self._sim_interval)
             self._elapsed += self._sim_interval
             self._last_tick_time = now
             self._print_terminal()
+
+        # --- Auto-refresh: one observation every refresh_interval real seconds ---
+        if (self._am is not None
+                and self._refresh_interval is not None
+                and self._last_schedule
+                and now - self._last_refresh_time >= self._refresh_interval):
+            self._do_scheduled_refresh(now)
+
         self._recompute_attention()
         self._draw_graph()
+
+    # ------------------------------------------------------------------
+    # Scheduled observation
+    # ------------------------------------------------------------------
+
+    def _do_scheduled_refresh(self, now: float) -> None:
+        target = self._last_schedule[0]
+        before = self._kb.get_concept(target).epistemic_error
+        if self._am is not None:
+            refresh_used = self._am.observe(target)
+        else:
+            self._kb.refresh_concept(target, refresh=0.4)
+            refresh_used = 0.4
+        after = self._kb.get_concept(target).epistemic_error
+        self._last_refresh_time = now
+        self._highlighted = target
+        self._highlight_until = now + self._highlight_duration
+        print(f"[OBS   ]  '{target}'  E: {before:.3f} → {after:.3f}  (refresh={refresh_used:.3f})")
 
     # ------------------------------------------------------------------
     # Drawing
@@ -200,6 +255,25 @@ class KBVisualizer:
             node_size=node_sizes,
             alpha=0.92,
         )
+
+        # Highlight ring: fading yellow circle drawn over the last-refreshed node
+        now = time.time()
+        if self._highlighted and now < self._highlight_until:
+            remaining = self._highlight_until - now
+            alpha = remaining / self._highlight_duration
+            hi_size = (
+                _NODE_SIZE_MIN
+                + (_NODE_SIZE_MAX - _NODE_SIZE_MIN) * self._attention.get(self._highlighted, 0.0)
+                + _HIGHLIGHT_SIZE_BONUS
+            )
+            nx.draw_networkx_nodes(
+                graph, self._pos, ax=self._ax_graph,
+                nodelist=[self._highlighted],
+                node_color=_HIGHLIGHT_COLOR,
+                node_size=hi_size,
+                alpha=alpha,
+            )
+
         nx.draw_networkx_labels(
             graph, self._pos, labels=labels, ax=self._ax_graph,
             font_size=8, font_color='white', font_weight='bold',
@@ -224,7 +298,10 @@ class KBVisualizer:
             f"{cid}(E={self._kb.get_concept(cid).epistemic_error:.2f} A={a:.2f})"
             for cid, a in top
         )
-        print(f"[t={self._elapsed:6.1f}s]  goal={self._goal_id:<20}  {parts}")
+        schedule_str = ''
+        if self._am is not None:
+            schedule_str = f"  → schedule: {self._last_schedule}"
+        print(f"[t={self._elapsed:6.1f}s]  goal={self._goal_id:<20}  {parts}{schedule_str}")
 
     # ------------------------------------------------------------------
     # Interaction
@@ -232,6 +309,8 @@ class KBVisualizer:
 
     def _on_radio_select(self, label: str) -> None:
         self._goal_id = label
+        if self._am is not None:
+            self._am.set_goal(label)
         self._recompute_attention()
         self._draw_graph()
         print(f"[GOAL  ]  Mission changed → '{label}'")
@@ -252,6 +331,8 @@ class KBVisualizer:
         if concept.concept_type == 'task':
             # Clicking a task node switches the goal
             self._goal_id = clicked
+            if self._am is not None:
+                self._am.set_goal(clicked)
             self._recompute_attention()
             # Sync RadioButtons selection
             labels = [lbl.get_text() for lbl in self._radio.labels]
@@ -259,11 +340,13 @@ class KBVisualizer:
                 self._radio.set_active(labels.index(clicked))
             print(f"[GOAL  ]  Mission changed → '{clicked}'")
         else:
-            # Clicking any other node simulates an observation (refresh)
+            # Clicking any other node simulates a manual observation (refresh)
             before = concept.epistemic_error
             self._kb.refresh_concept(clicked, refresh=0.5)
             after = concept.epistemic_error
-            print(f"[REFRESH]  '{clicked}'  E: {before:.3f} → {after:.3f}")
+            self._highlighted = clicked
+            self._highlight_until = time.time() + self._highlight_duration
+            print(f"[MANUAL]  '{clicked}'  E: {before:.3f} → {after:.3f}")
 
         self._draw_graph()
 

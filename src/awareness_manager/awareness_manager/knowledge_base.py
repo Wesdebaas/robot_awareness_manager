@@ -20,7 +20,7 @@ class KnowledgeBase:
         Formula 1 — Spreading Activation:    R_n = (1 - alpha)^d
         Formula 5 — Epistemic Error/Entropy: E_{t+1} = E_t + drift - refresh
 
-    Formulas 2–4 (Anticipatory Horizon, Utility Saturation, Quadratic Cost)
+    Formulas 2-4 (Anticipatory Horizon, Utility Saturation, Quadratic Cost)
     operate at the Awareness Manager level, which sits on top of this KB.
 
     Graph implementation rationale:

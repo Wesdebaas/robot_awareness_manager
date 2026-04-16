@@ -10,6 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', [
+            'launch/awareness_demo.launch.py',
+            'launch/pv_inspection_demo.launch.py',
+        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -20,6 +24,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'awareness_node          = awareness_manager.ros_node:main',
+            'run_birdhouse_viz       = demos.run_birdhouse_viz:main',
+            'run_pv_inspection_viz   = demos.run_pv_inspection_viz:main',
         ],
     },
 )
