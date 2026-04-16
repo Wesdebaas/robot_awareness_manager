@@ -28,6 +28,7 @@ setup(
             'run_birdhouse_viz          = demos.run_birdhouse_viz:main',
             'run_pv_inspection_viz      = demos.run_pv_inspection_viz:main',
             'run_pv_inspection_viz_qt   = demos.run_pv_inspection_viz_qt:main',
+            'run_evaluation             = evaluation.run_evaluation:main',
         ],
     },
 )
