@@ -1,56 +1,76 @@
 import math
 import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from matplotlib.widgets import RadioButtons
+from matplotlib.widgets import RadioButtons, CheckButtons
 import networkx as nx
 
 from awareness_manager.knowledge_base import KnowledgeBase
 
 if TYPE_CHECKING:
     from awareness_manager.awareness_manager import AwarenessManager
+    from awareness_manager.instance_knowledge_base import InstanceKnowledgeBase
 
 
 # --- Visual constants --------------------------------------------------------
 
 _NODE_SIZE_MIN = 200        # size for concepts outside the attention window
 _NODE_SIZE_MAX = 2000       # size for the goal node (attention = 1.0)
+_INST_NODE_SIZE_MIN = 60    # instance equivalent
+_INST_NODE_SIZE_MAX = 700
 _EDGE_WIDTH_SCALE = 4.0     # base numerator for width = scale / weight²
 _HIT_RADIUS = 0.15          # graph-coordinate radius for click detection
 _CMAP = plt.cm.RdYlGn_r     # green=fresh (E=0), red=stale (E=1)
-_HIGHLIGHT_COLOR = '#ffdd00' # yellow ring drawn over a just-refreshed node
-_HIGHLIGHT_SIZE_BONUS = 600  # extra node size for the highlight ring
+_HIGHLIGHT_COLOR = '#ffdd00' # yellow ring: just observed
+_HIGHLIGHT_SIZE_BONUS = 600  # extra size added to the highlight ring
+_INST_HIGHLIGHT_SIZE_BONUS = 200
+
+# Instance-specific colours
+_ISINSTANCE_EDGE_COLOR  = '#5555aa'   # dashed: class → instance (typeof link)
+_INST_REL_EDGE_COLOR    = '#446688'   # dotted: instance ↔ instance (relational)
+_INSTANCE_NODE_ALPHA    = 0.82
+_INSTANCE_EDGE_ALPHA    = 0.45
+
+# Radial layout: instances orbit their parent class node
+_INST_ORBIT_RADIUS_BASE = 0.12   # minimum orbit radius
+_INST_ORBIT_RADIUS_STEP = 0.025  # extra radius per additional instance
 
 
 class KBVisualizer:
     """
-    Live visualizer for a KnowledgeBase.
+    Live visualizer for a KnowledgeBase, with optional instance layer.
 
-    Renders the semantic graph in a matplotlib window that updates on a timer.
-    Simultaneously prints a one-line summary to the terminal each tick.
+    Renders the class-level semantic graph in a matplotlib window that updates
+    on a timer. When an InstanceKnowledgeBase is provided, a second layer of
+    instance nodes can be toggled on/off via a "Show instances" checkbox.
 
-    Node encoding:
+    Node encoding (class nodes — circles):
         Color  — epistemic error (green = fresh, red = stale)
         Size   — attention value from the current goal (larger = more attention)
         Label  — concept_id + live E and A values
 
+    Node encoding (instance nodes — diamonds):
+        Color  — epistemic error (same colour map)
+        Size   — attention value (scaled to 35% of class range)
+        Label  — instance_id + E and A values (smaller font)
+
     Edge encoding:
-        Width  — 1 / semantic_weight (thicker = tighter coupling)
+        Class edges    — solid grey,  width ∝ 1/weight²
+        typeof edges   — dashed blue-grey (class → instance)
+        Relational edges — dotted teal (instance ↔ instance)
 
     Interaction:
-        Click a non-task node  → refresh it (simulate an observation, E drops)
-        Click a task node      → set it as the new goal
-        RadioButtons panel     → switch active goal from a list
+        Click a task class node    → set as new goal
+        Click any other class node → manual refresh (E drops)
+        Click an instance node     → manual refresh of that instance
+        RadioButtons panel         → switch active goal
+        "Show instances" checkbox  → toggle instance layer visibility
 
-    When awareness_manager and refresh_interval are both provided the visualizer
-    automatically refreshes the top-priority concept on that cadence and draws a
-    fading yellow ring around it to make the observation visible.
-
-    Performance: static elements (edges, edge labels) are drawn once at startup.
-    Per-frame updates only touch node colors, node sizes, label text strings, and
-    highlight ring alphas — all via in-place artist mutations, no ax.clear().
+    Performance: static elements are drawn once at startup. Per-frame updates
+    only mutate node colours, sizes, and label strings in-place.
     """
 
     def __init__(
@@ -62,19 +82,24 @@ class KBVisualizer:
         awareness_manager: "AwarenessManager | None" = None,
         refresh_interval: float | None = None,
         highlight_duration: float = 1.5,
+        instance_kb: "InstanceKnowledgeBase | None" = None,
     ) -> None:
         """
         Args:
-            sim_interval:       Simulated time (seconds) that passes per real tick.
-            frame_interval:     Real time (seconds) between visual redraws.
-            awareness_manager:  Optional AM; when set, tick delegates to am.tick()
-                                and observations are executed via am.observe()
-                                (Formula 3 refresh values).
+            kb:                 The class-level knowledge base to visualise.
+            goal_id:            Initial mission goal concept ID.
+            sim_interval:       Simulated seconds that pass per real tick.
+            frame_interval:     Real seconds between visual redraws.
+            awareness_manager:  Optional AM; when set, tick and observe are
+                                delegated to the AM (Formulas 1-5).
             refresh_interval:   Real seconds between automatic observations.
-                                None disables auto-refresh (manual clicks only).
-            highlight_duration: Seconds the yellow ring stays visible after a refresh.
+                                None disables auto-refresh.
+            highlight_duration: Seconds the yellow ring is visible after a refresh.
+            instance_kb:        Optional instance-level knowledge base. When provided,
+                                a "Show instances" checkbox appears in the right panel.
         """
         self._kb = kb
+        self._instance_kb = instance_kb
         self._goal_id = goal_id
         self._sim_interval = sim_interval
         self._frame_interval = frame_interval
@@ -87,22 +112,58 @@ class KBVisualizer:
         self._last_tick_time = time.time()
         self._last_refresh_time = time.time()
         self._last_schedule: list[str] = []
-        self._dirty = True   # redraw only when state actually changed
+        self._dirty = True
+        self._show_instances = False   # toggled by checkbox
 
-        # Perf counters — printed every 30 dirty redraws
+        # Perf counters
         self._perf_frames = 0
         self._perf_artist_ms = 0.0
         self._perf_render_ms = 0.0
 
-        # Highlight state: maps concept_id → expiry timestamp for the yellow ring.
+        # Highlight state: concept_id → expiry timestamp
         self._highlighted: dict[str, float] = {}
 
-        # Fix layout positions once so the graph does not jump between frames
+        # Fix class layout once so the graph never jumps
         self._pos = nx.spring_layout(kb._graph, seed=42)
+
+        # Instance positions: orbit parent class node
+        self._instance_pos: dict[str, tuple[float, float]] = {}
+        if self._instance_kb is not None:
+            self._instance_pos = self._compute_instance_pos()
 
         self._setup_figure()
         self._recompute_attention()
         self._setup_artists()
+
+    # ------------------------------------------------------------------
+    # Instance layout
+    # ------------------------------------------------------------------
+
+    def _compute_instance_pos(self) -> dict[str, tuple[float, float]]:
+        """
+        Place each instance radially around its parent class node.
+
+        Instances of the same class are evenly distributed on a circle whose
+        radius scales slightly with the number of instances to prevent overlap.
+        """
+        class_instances: dict[str, list[str]] = defaultdict(list)
+        for iid in self._instance_kb.instance_ids():
+            inst = self._instance_kb.get_instance(iid)
+            if inst.class_id in self._pos:
+                class_instances[inst.class_id].append(iid)
+
+        pos: dict[str, tuple[float, float]] = {}
+        for class_id, instances in class_instances.items():
+            cx, cy = self._pos[class_id]
+            n = len(instances)
+            radius = _INST_ORBIT_RADIUS_BASE + _INST_ORBIT_RADIUS_STEP * max(0, n - 1)
+            for i, iid in enumerate(sorted(instances)):   # sorted for determinism
+                angle = 2 * math.pi * i / n + math.pi / 6
+                pos[iid] = (
+                    cx + radius * math.cos(angle),
+                    cy + radius * math.sin(angle),
+                )
+        return pos
 
     # ------------------------------------------------------------------
     # Figure setup
@@ -112,13 +173,14 @@ class KBVisualizer:
         self._fig = plt.figure(figsize=(14, 7))
         self._fig.patch.set_facecolor('#1e1e2e')
 
-        # Left panel: graph (wide)
+        # Left panel: graph
         self._ax_graph = self._fig.add_axes([0.01, 0.05, 0.72, 0.90])
         self._ax_graph.set_facecolor('#1e1e2e')
         self._ax_graph.axis('off')
 
         # Right panel: RadioButtons for goal selection
-        self._ax_radio = self._fig.add_axes([0.76, 0.25, 0.22, 0.55])
+        radio_bottom = 0.25 if self._instance_kb is not None else 0.20
+        self._ax_radio = self._fig.add_axes([0.76, radio_bottom, 0.22, 0.60])
         self._ax_radio.set_facecolor('#2a2a3e')
 
         concept_ids = self._kb.concept_ids()
@@ -133,7 +195,22 @@ class KBVisualizer:
             label.set_fontsize(9)
         self._ax_radio.set_title('Active Goal', color='white', fontsize=10, pad=6)
 
-        # Click handler for node interaction
+        # "Show instances" checkbox — only when instance_kb is provided
+        self._ax_check = None
+        self._check = None
+        if self._instance_kb is not None:
+            self._ax_check = self._fig.add_axes([0.76, 0.08, 0.22, 0.13])
+            self._ax_check.set_facecolor('#2a2a3e')
+            self._check = CheckButtons(
+                self._ax_check,
+                labels=['Show instances'],
+                actives=[False],
+            )
+            self._check.on_clicked(self._toggle_instances)
+            for label in self._check.labels:
+                label.set_color('white')
+                label.set_fontsize(9)
+
         self._fig.canvas.mpl_connect('button_press_event', self._on_click)
 
     def _setup_artists(self) -> None:
@@ -141,25 +218,30 @@ class KBVisualizer:
         Draw static elements once and create persistent artist handles.
 
         Static (drawn once, never updated):
-            - Edges with widths proportional to 1/weight²
-            - Edge weight labels
+            - Class edges (width ∝ 1/weight²)
+            - Class edge weight labels
+            - Instance typeof edges (class → instance, dashed)
+            - Instance relational edges (instance ↔ instance, dotted)
 
-        Dynamic (handles kept, data updated in-place each frame):
-            - Node collection  : colors (E) and sizes (A) change every tick
-            - Label Text objects: E and A values in the text change every tick
-            - Highlight PathCollections: one per node, alpha toggled on observe
+        Dynamic (handles kept, data mutated in-place each frame):
+            - Class node collection  (colours + sizes)
+            - Class label Text objects
+            - Class highlight PathCollections
+            - Instance node scatter  (colours + sizes)
+            - Instance label Text objects
+            - Instance highlight scatter collections
         """
         graph = self._kb._graph
         concept_ids = self._kb.concept_ids()
 
-        # --- Static: title (updated in-place via set_text, never cleared) ---
+        # --- Title ---
         self._title = self._ax_graph.set_title(
             f'Robot Awareness — Knowledge Graph    '
             f'[t={self._elapsed:5.1f}s  goal: {self._goal_id}]',
             color='white', fontsize=11, pad=8,
         )
 
-        # --- Static: edges (weights never change) ---
+        # --- Static: class edges ---
         edge_widths = [
             _EDGE_WIDTH_SCALE / (graph[u][v]['weight'] ** 2)
             for u, v in graph.edges()
@@ -169,7 +251,7 @@ class KBVisualizer:
             width=edge_widths, edge_color='#888888', alpha=0.6,
         )
 
-        # --- Static: edge weight labels ---
+        # --- Static: class edge weight labels ---
         edge_labels = {
             (u, v): f"{graph[u][v]['weight']:.1f}"
             for u, v in graph.edges()
@@ -179,7 +261,37 @@ class KBVisualizer:
             font_size=7, font_color='#cccccc', bbox=dict(alpha=0),
         )
 
-        # --- Dynamic: node collection (colors + sizes updated each frame) ---
+        # --- Static: instance edges (drawn before instance nodes so nodes sit on top) ---
+        self._instance_edge_artists: list = []
+        if self._instance_kb is not None:
+            # typeof edges: class pos → instance pos (dashed)
+            for iid in self._instance_kb.instance_ids():
+                inst = self._instance_kb.get_instance(iid)
+                if inst.class_id in self._pos and iid in self._instance_pos:
+                    x0, y0 = self._pos[inst.class_id]
+                    x1, y1 = self._instance_pos[iid]
+                    line, = self._ax_graph.plot(
+                        [x0, x1], [y0, y1],
+                        color=_ISINSTANCE_EDGE_COLOR, linewidth=0.8,
+                        linestyle='--', alpha=_INSTANCE_EDGE_ALPHA,
+                        zorder=1, visible=False,
+                    )
+                    self._instance_edge_artists.append(line)
+
+            # Relational edges: instance ↔ instance (dotted)
+            for u, v in self._instance_kb._graph.edges():
+                if u in self._instance_pos and v in self._instance_pos:
+                    x0, y0 = self._instance_pos[u]
+                    x1, y1 = self._instance_pos[v]
+                    line, = self._ax_graph.plot(
+                        [x0, x1], [y0, y1],
+                        color=_INST_REL_EDGE_COLOR, linewidth=0.8,
+                        linestyle=':', alpha=_INSTANCE_EDGE_ALPHA + 0.1,
+                        zorder=1, visible=False,
+                    )
+                    self._instance_edge_artists.append(line)
+
+        # --- Dynamic: class node collection ---
         node_colors = [
             _CMAP(self._kb.get_concept(cid).epistemic_error)
             for cid in concept_ids
@@ -195,10 +307,10 @@ class KBVisualizer:
             node_size=node_sizes,
             alpha=0.92,
         )
-        # Store the node order so _draw_graph updates the right indices
+        self._node_collection.set_zorder(3)
         self._concept_ids = concept_ids
 
-        # --- Dynamic: highlight rings (one PathCollection per node, alpha=0 by default) ---
+        # --- Dynamic: class highlight rings ---
         self._highlight_collections: dict[str, object] = {}
         for cid in concept_ids:
             coll = nx.draw_networkx_nodes(
@@ -208,9 +320,10 @@ class KBVisualizer:
                 node_size=_NODE_SIZE_MIN,
                 alpha=0.0,
             )
+            coll.set_zorder(2)
             self._highlight_collections[cid] = coll
 
-        # --- Dynamic: node label Text objects (text updated each frame) ---
+        # --- Dynamic: class label Text objects ---
         self._label_texts: dict[str, plt.Text] = {}
         for cid in concept_ids:
             x, y = self._pos[cid]
@@ -225,6 +338,81 @@ class KBVisualizer:
                 zorder=5,
             )
             self._label_texts[cid] = txt
+
+        # --- Dynamic: instance nodes, labels, highlights ---
+        self._instance_node_collection = None
+        self._instance_label_texts: dict[str, plt.Text] = {}
+        self._instance_highlight_collections: dict[str, object] = {}
+        self._instance_ids: list[str] = []
+
+        if self._instance_kb is not None:
+            self._instance_ids = list(self._instance_kb.instance_ids())
+            if self._instance_ids:
+                xs = [self._instance_pos[iid][0] for iid in self._instance_ids]
+                ys = [self._instance_pos[iid][1] for iid in self._instance_ids]
+                inst_colors = [
+                    _CMAP(self._instance_kb.get_instance(iid).epistemic_error)
+                    for iid in self._instance_ids
+                ]
+                inst_sizes = [
+                    _INST_NODE_SIZE_MIN
+                    + (_INST_NODE_SIZE_MAX - _INST_NODE_SIZE_MIN)
+                    * self._attention.get(iid, 0.0)
+                    for iid in self._instance_ids
+                ]
+                self._instance_node_collection = self._ax_graph.scatter(
+                    xs, ys, s=inst_sizes, c=inst_colors,
+                    marker='D', alpha=_INSTANCE_NODE_ALPHA,
+                    edgecolors='white', linewidths=0.4,
+                    zorder=4, visible=False,
+                )
+
+                # Highlight rings for instances
+                for iid in self._instance_ids:
+                    x, y = self._instance_pos[iid]
+                    h = self._ax_graph.scatter(
+                        [x], [y], s=[_INST_NODE_SIZE_MIN],
+                        c=_HIGHLIGHT_COLOR, marker='D',
+                        alpha=0.0, zorder=3, visible=True,
+                    )
+                    self._instance_highlight_collections[iid] = h
+
+                # Labels for instances (smaller, no heavy bbox)
+                for iid in self._instance_ids:
+                    x, y = self._instance_pos[iid]
+                    inst = self._instance_kb.get_instance(iid)
+                    txt = self._ax_graph.text(
+                        x, y,
+                        f"{iid}\nE={inst.epistemic_error:.2f} A={self._attention.get(iid, 0.0):.2f}",
+                        ha='center', va='center',
+                        fontsize=6, color='#ddddff',
+                        bbox=dict(boxstyle='round,pad=0.2', facecolor='#1e1e2e',
+                                  alpha=0.5, edgecolor='none'),
+                        zorder=6, visible=False,
+                    )
+                    self._instance_label_texts[iid] = txt
+
+    # ------------------------------------------------------------------
+    # Instance layer visibility
+    # ------------------------------------------------------------------
+
+    def _toggle_instances(self, _label: str) -> None:
+        self._show_instances = not self._show_instances
+        self._set_instance_visibility(self._show_instances)
+        self._dirty = True
+
+    def _set_instance_visibility(self, visible: bool) -> None:
+        """Show or hide all instance-layer artists at once."""
+        for line in self._instance_edge_artists:
+            line.set_visible(visible)
+        if self._instance_node_collection is not None:
+            self._instance_node_collection.set_visible(visible)
+        for txt in self._instance_label_texts.values():
+            txt.set_visible(visible)
+        # Highlight rings: control via alpha, not visibility (so fade logic still works)
+        if not visible:
+            for coll in self._instance_highlight_collections.values():
+                coll.set_alpha(0.0)
 
     # ------------------------------------------------------------------
     # Animation
@@ -244,13 +432,10 @@ class KBVisualizer:
     def _frame(self, _frame_number) -> None:
         now = time.time()
 
-        # --- Simulation ticks: drain all accumulated ticks in one frame pass.
-        #     Using += sim_interval (not = now) keeps timing precise if a frame
-        #     fires late — no ticks are silently skipped.
+        # Drain all accumulated simulation ticks
         while now - self._last_tick_time >= self._sim_interval:
             if self._am is not None:
                 self._last_schedule = self._am.tick(dt=self._sim_interval)
-                # Sync goal if the mission queue auto-promoted a new goal
                 if self._am.goal_id != self._goal_id:
                     self._goal_id = self._am.goal_id
                     labels = [lbl.get_text() for lbl in self._radio.labels]
@@ -263,7 +448,7 @@ class KBVisualizer:
             self._dirty = True
             self._print_terminal()
 
-        # --- Auto-refresh: one observation every refresh_interval real seconds ---
+        # Auto-refresh
         if (self._am is not None
                 and self._refresh_interval is not None
                 and self._last_schedule
@@ -271,16 +456,15 @@ class KBVisualizer:
             self._do_scheduled_refresh(now)
             self._dirty = True
 
-        # --- Expiring highlights need one final redraw after they clear ---
         if self._highlighted:
             self._dirty = True
 
         if self._dirty:
             self._recompute_attention()
             t0 = time.perf_counter()
-            self._draw_graph()          # artist data updates (Python side)
+            self._draw_graph()
             t1 = time.perf_counter()
-            self._fig.canvas.draw()     # synchronous render (backend side)
+            self._fig.canvas.draw()
             t2 = time.perf_counter()
             self._dirty = False
 
@@ -304,13 +488,13 @@ class KBVisualizer:
     def _do_scheduled_refresh(self, now: float) -> None:
         self._last_refresh_time = now
         for target in self._last_schedule:
-            before = self._kb.get_concept(target).epistemic_error
+            before = self._get_epistemic_error(target)
             if self._am is not None:
                 refresh_used = self._am.observe(target)
             else:
                 self._kb.refresh_concept(target, refresh=0.4)
                 refresh_used = 0.4
-            after = self._kb.get_concept(target).epistemic_error
+            after = self._get_epistemic_error(target)
             self._highlighted[target] = now + self._highlight_duration
             print(f"[OBS   ]  '{target}'  E: {before:.3f} → {after:.3f}  (refresh={refresh_used:.3f})")
 
@@ -320,7 +504,6 @@ class KBVisualizer:
 
     def _recompute_attention(self) -> None:
         if self._am is not None:
-            # Use the AM's already-computed blended attention (Formulas 1+2).
             self._attention = self._am.attention()
         else:
             try:
@@ -335,7 +518,7 @@ class KBVisualizer:
             f'[t={self._elapsed:5.1f}s  goal: {self._goal_id}]'
         )
 
-        # --- Node colors and sizes ---
+        # --- Class node colours and sizes ---
         node_colors = [
             _CMAP(self._kb.get_concept(cid).epistemic_error)
             for cid in self._concept_ids
@@ -347,7 +530,7 @@ class KBVisualizer:
         self._node_collection.set_facecolor(node_colors)
         self._node_collection.set_sizes(node_sizes)
 
-        # --- Node label text ---
+        # --- Class label text ---
         for cid in self._concept_ids:
             self._label_texts[cid].set_text(
                 f"{cid}\n"
@@ -355,7 +538,7 @@ class KBVisualizer:
                 f"A={self._attention.get(cid, 0.0):.2f}"
             )
 
-        # --- Highlight rings ---
+        # --- Class highlight rings ---
         now = time.time()
         for cid, coll in self._highlight_collections.items():
             if cid in self._highlighted:
@@ -375,7 +558,56 @@ class KBVisualizer:
             else:
                 coll.set_alpha(0.0)
 
+        # --- Instance layer (only update data when visible) ---
+        if self._show_instances and self._instance_kb is not None:
+            self._draw_instance_layer(now)
+
         self._fig.canvas.draw_idle()
+
+    def _draw_instance_layer(self, now: float) -> None:
+        """Update instance node colours, sizes, labels, and highlight rings."""
+        if not self._instance_ids or self._instance_node_collection is None:
+            return
+
+        inst_colors = [
+            _CMAP(self._instance_kb.get_instance(iid).epistemic_error)
+            for iid in self._instance_ids
+        ]
+        inst_sizes = [
+            _INST_NODE_SIZE_MIN
+            + (_INST_NODE_SIZE_MAX - _INST_NODE_SIZE_MIN)
+            * self._attention.get(iid, 0.0)
+            for iid in self._instance_ids
+        ]
+        self._instance_node_collection.set_facecolor(inst_colors)
+        self._instance_node_collection.set_sizes(inst_sizes)
+
+        for iid in self._instance_ids:
+            inst = self._instance_kb.get_instance(iid)
+            self._instance_label_texts[iid].set_text(
+                f"{iid}\n"
+                f"E={inst.epistemic_error:.2f} A={self._attention.get(iid, 0.0):.2f}"
+            )
+
+        # Instance highlight rings
+        for iid, coll in self._instance_highlight_collections.items():
+            if iid in self._highlighted:
+                expiry = self._highlighted[iid]
+                if now >= expiry:
+                    del self._highlighted[iid]
+                    coll.set_alpha(0.0)
+                else:
+                    remaining = expiry - now
+                    hi_size = (
+                        _INST_NODE_SIZE_MIN
+                        + (_INST_NODE_SIZE_MAX - _INST_NODE_SIZE_MIN)
+                        * self._attention.get(iid, 0.0)
+                        + _INST_HIGHLIGHT_SIZE_BONUS
+                    )
+                    coll.set_sizes([hi_size])
+                    coll.set_alpha(remaining / self._highlight_duration)
+            else:
+                coll.set_alpha(0.0)
 
     # ------------------------------------------------------------------
     # Terminal output
@@ -386,7 +618,7 @@ class KBVisualizer:
             self._attention.items(), key=lambda x: x[1], reverse=True
         )[:5]
         parts = '  '.join(
-            f"{cid}(E={self._kb.get_concept(cid).epistemic_error:.2f} A={a:.2f})"
+            f"{cid}(E={self._get_epistemic_error(cid):.2f} A={a:.2f})"
             for cid, a in top
         )
         schedule_str = ''
@@ -413,7 +645,6 @@ class KBVisualizer:
         print(f"[GOAL  ]  Mission changed → '{label}'")
 
     def _on_click(self, event) -> None:
-        # Only respond to clicks inside the graph axes
         if event.inaxes is not self._ax_graph:
             return
         if event.xdata is None or event.ydata is None:
@@ -423,10 +654,25 @@ class KBVisualizer:
         if clicked is None:
             return
 
-        concept = self._kb.get_concept(clicked)
+        # --- Instance node clicked ---
+        if self._instance_kb is not None and clicked in self._instance_kb.instance_ids():
+            if not self._show_instances:
+                return  # ignore clicks on hidden instances
+            before = self._instance_kb.get_instance(clicked).epistemic_error
+            if self._am is not None:
+                self._am.observe(clicked)
+            else:
+                self._instance_kb.refresh_instance(clicked, refresh=0.5)
+            after = self._instance_kb.get_instance(clicked).epistemic_error
+            self._highlighted[clicked] = time.time() + self._highlight_duration
+            print(f"[MANUAL]  '{clicked}' (instance)  E: {before:.3f} → {after:.3f}")
+            self._draw_graph()
+            self._fig.canvas.draw_idle()
+            return
 
+        # --- Class node clicked ---
+        concept = self._kb.get_concept(clicked)
         if concept.concept_type == 'task':
-            # Clicking a task node switches the goal
             self._goal_id = clicked
             if self._am is not None:
                 self._am.set_goal(clicked)
@@ -436,7 +682,6 @@ class KBVisualizer:
                 self._radio.set_active(labels.index(clicked))
             print(f"[GOAL  ]  Mission changed → '{clicked}'")
         else:
-            # Clicking any other node simulates a manual observation (refresh)
             before = concept.epistemic_error
             self._kb.refresh_concept(clicked, refresh=0.5)
             after = concept.epistemic_error
@@ -447,12 +692,38 @@ class KBVisualizer:
         self._fig.canvas.draw_idle()
 
     def _nearest_node(self, x: float, y: float) -> str | None:
-        """Return the concept_id of the closest node within _HIT_RADIUS, or None."""
+        """
+        Return the concept_id or instance_id of the closest node within
+        _HIT_RADIUS. Searches class positions first, then instance positions
+        (only when the instance layer is visible).
+        """
         best_id = None
         best_dist = _HIT_RADIUS
+
         for cid, (nx_, ny_) in self._pos.items():
             dist = math.hypot(x - nx_, y - ny_)
             if dist < best_dist:
                 best_dist = dist
                 best_id = cid
+
+        if self._show_instances:
+            for iid, (ix, iy) in self._instance_pos.items():
+                dist = math.hypot(x - ix, y - iy)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_id = iid
+
         return best_id
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _get_epistemic_error(self, concept_id: str) -> float:
+        """Return epistemic error for either a class concept or an instance."""
+        if concept_id in self._kb._concepts:
+            return self._kb.get_concept(concept_id).epistemic_error
+        if (self._instance_kb is not None
+                and concept_id in self._instance_kb.instance_ids()):
+            return self._instance_kb.get_instance(concept_id).epistemic_error
+        return 0.0

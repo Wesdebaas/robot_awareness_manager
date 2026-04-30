@@ -73,6 +73,7 @@ class KnowledgeBase:
         goal_id: str,
         alpha: float = 0.5,
         max_distance: float = 4.0,
+        use_spreading_activation: bool = True,
     ) -> dict[str, float]:
         """
         Formula 1 — Spreading Activation: R_n = (1 - alpha)^d
@@ -85,10 +86,17 @@ class KnowledgeBase:
         The goal node always receives attention 1.0 (d = 0).
         Concepts beyond max_distance are not returned (implicitly zero).
 
+        When use_spreading_activation is False (F1 OFF baseline), all reachable
+        concepts receive uniform attention 1.0 — the reachability cutoff still
+        applies, but distance decay is disabled. This wastes budget on semantically
+        distant concepts, demonstrating the value of the formula.
+
         Args:
-            goal_id:      ID of the current mission goal concept.
-            alpha:        Decay factor per unit of semantic distance [0, 1].
-            max_distance: Maximum weighted graph distance to consider.
+            goal_id:                  ID of the current mission goal concept.
+            alpha:                    Decay factor per unit of semantic distance [0, 1].
+            max_distance:             Maximum weighted graph distance to consider.
+            use_spreading_activation: When False, returns uniform A=1.0 for all
+                                      reachable concepts (F1 OFF baseline).
 
         Returns:
             Dict mapping concept_id -> attention value in (0, 1].
@@ -99,7 +107,9 @@ class KnowledgeBase:
         distances = nx.single_source_dijkstra_path_length(
             self._graph, goal_id, cutoff=max_distance, weight='weight'
         )
-        return {cid: (1.0 - alpha) ** d for cid, d in distances.items()}
+        if use_spreading_activation:
+            return {cid: (1.0 - alpha) ** d for cid, d in distances.items()}
+        return {cid: 1.0 for cid in distances}
 
     # ------------------------------------------------------------------
     # Formula 5 — Epistemic Error / Entropy
@@ -122,14 +132,20 @@ class KnowledgeBase:
         ))
         concept.last_updated = time.time()
 
-    def tick(self, dt: float) -> None:
+    def tick(self, dt: float, apply_drift: bool = True) -> None:
         """
         Advance time by dt seconds, applying passive drift to all concepts.
 
         Without active refresh, epistemic error grows at each concept's
         decay_rate per second. This models the natural entropy increase
         described in formula 5 (drift term).
+
+        When apply_drift is False (F5 OFF baseline), epistemic error is frozen —
+        no drift is applied. Scheduling then falls back to attention-only priority
+        (see AwarenessManager.priorities), removing entropy-driven urgency.
         """
+        if not apply_drift:
+            return
         for concept in self._concepts.values():
             concept.epistemic_error = min(1.0,
                 concept.epistemic_error + concept.decay_rate * dt

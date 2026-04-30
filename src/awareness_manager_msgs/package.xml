@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>awareness_manager_msgs</name>
+  <version>0.0.1</version>
+  <description>
+    Custom service and action interface definitions for the awareness_manager package.
+
+    Services:
+      QueryConcept  — on-demand lookup of any concept's E, A, P values
+      SetAttention  — one-tick attention override for debugging / external control
+
+    Actions:
+      QueueGoal     — queue a future goal with ETA and level; streams tick-by-tick
+                      feedback until the goal is promoted to active
+  </description>
+  <maintainer email="wesselremmelzwaan@gmail.com">Wessel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

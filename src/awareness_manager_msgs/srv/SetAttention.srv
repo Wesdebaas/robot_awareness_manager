@@ -1,0 +1,7 @@
+# Request: force a one-tick attention override for a concept
+string concept_id
+float64 attention_override
+---
+# Response
+bool success
+string message

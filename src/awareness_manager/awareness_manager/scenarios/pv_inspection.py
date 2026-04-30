@@ -1,4 +1,5 @@
-from awareness_manager.concept import Concept
+from awareness_manager.concept import Concept, InstanceConcept
+from awareness_manager.instance_knowledge_base import InstanceKnowledgeBase
 from awareness_manager.knowledge_base import KnowledgeBase
 
 
@@ -83,3 +84,54 @@ def build_pv_inspection_kb() -> KnowledgeBase:
     kb.add_relation('drone_gps',     'airspace',            weight=1.5)
 
     return kb
+
+
+def build_pv_inspection_instance_kb() -> InstanceKnowledgeBase:
+    """
+    Instance-level knowledge base for the PV inspection scenario.
+
+    Adds specific physical individuals for the drone inspection domain.
+    Demonstrates goal-dependent instance relevance:
+        - During inspect_pv_field: panel instances are relevant, battery/landing less so.
+        - During emergency_landing: battery_main and landing zone instances become critical.
+
+    Instance relations use typed edges:
+        partOf     — instance belongs to a larger structure
+        monitors   — sensor instance is targeted at an object instance
+        locatedAt  — instance is physically at a location
+
+    Semantic coverage (7 instances):
+        panel_A1, panel_A2, panel_B1  — three solar panels (class: solar_panel)
+        battery_main                   — primary drone battery (class: drone_battery)
+        lz_north, lz_south             — two landing zones (class: landing_zone)
+        camera_main                    — primary inspection camera (class: drone_camera)
+    """
+    ikb = InstanceKnowledgeBase()
+
+    # --- Solar panel instances ---
+    ikb.add_instance(InstanceConcept('panel_A1', 'object', decay_rate=0.001, class_id='solar_panel'))
+    ikb.add_instance(InstanceConcept('panel_A2', 'object', decay_rate=0.001, class_id='solar_panel'))
+    ikb.add_instance(InstanceConcept('panel_B1', 'object', decay_rate=0.001, class_id='solar_panel'))
+
+    # --- Battery instance ---
+    ikb.add_instance(InstanceConcept('battery_main', 'state', decay_rate=0.05, class_id='drone_battery'))
+
+    # --- Landing zone instances ---
+    ikb.add_instance(InstanceConcept('lz_north', 'location', decay_rate=0.005, class_id='landing_zone'))
+    ikb.add_instance(InstanceConcept('lz_south', 'location', decay_rate=0.005, class_id='landing_zone'))
+
+    # --- Camera instance ---
+    ikb.add_instance(InstanceConcept('camera_main', 'object', decay_rate=0.01, class_id='drone_camera'))
+
+    # --- Instance relations ---
+    # Panels are in a row (relational proximity — useful for relational propagation later)
+    ikb.add_instance_relation('panel_A1', 'panel_A2', weight=1.0, relation_type='partOf')
+    ikb.add_instance_relation('panel_A2', 'panel_B1', weight=2.0, relation_type='partOf')
+    # Camera is monitoring the current inspection panel
+    ikb.add_instance_relation('camera_main', 'panel_A1', weight=1.0, relation_type='monitors')
+    # Battery powers the camera (relevant when battery is the goal)
+    ikb.add_instance_relation('battery_main', 'camera_main', weight=2.0, relation_type='powers')
+    # Landing zones are close to each other (relational)
+    ikb.add_instance_relation('lz_north', 'lz_south', weight=1.5, relation_type='locatedAt')
+
+    return ikb

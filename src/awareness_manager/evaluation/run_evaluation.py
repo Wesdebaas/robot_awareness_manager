@@ -2,17 +2,21 @@
 Evaluation: Robot Awareness Management — Grounding Formulas
 ===========================================================
 
-Produces four thesis figures saved to evaluation/figures/:
+Produces seven thesis figures saved to evaluation/figures/:
 
     fig1_attention_reshuffle.png  — Formula 1: attention reshuffles on goal switch
     fig2_scheduling_comparison.png— Formula 3: AM-guided vs random vs no-refresh
     fig3_anticipatory_horizon.png — Formula 2: pre-tuning as future goal ETA → 0
     fig4_memory_budget.png        — Formula 4: attention window size vs budget B
+    fig5_class_instance_split.png — Class vs instance attention (D6.1 testbed)
+    fig8_certainty_threshold.png  — Phase 4: refresh count vs epistemic error trade-off
+    fig9_hierarchical_horizons.png— Phase 5: global / phase / task blending over time
 
 Run from the workspace root:
     python3 src/awareness_manager/evaluation/run_evaluation.py
 """
 
+import math
 import random
 from pathlib import Path
 
@@ -22,6 +26,10 @@ import matplotlib.ticker as ticker
 
 from awareness_manager.awareness_manager import AwarenessManager
 from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
+from awareness_manager.scenarios.manufacturing_d61 import (
+    build_manufacturing_d61_kb,
+    build_manufacturing_d61_instance_kb,
+)
 
 # ---------------------------------------------------------------------------
 # Output directory
@@ -144,7 +152,7 @@ def fig1_attention_reshuffle() -> None:
 def _run_scheduling_strategy(strategy: str, seed: int) -> dict:
     """
     Simulate _SIM_DURATION seconds with one of three scheduling strategies:
-        'am'      — priority = E × A, top-BUDGET concepts observed each cycle
+        'am'      — priority = E x A, top-BUDGET concepts observed each cycle
         'random'  — BUDGET randomly selected non-task concepts each cycle
         'noop'    — no observations; purely passive epistemic drift
 
@@ -215,7 +223,7 @@ def fig2_scheduling_comparison() -> None:
     }
 
     labels = {
-        'am':     'AM-guided  (priority = E × A)',
+        'am':     'AM-guided  (priority = E x A)',
         'random': 'Random selection',
         'noop':   'No refresh  (passive drift)',
     }
@@ -282,7 +290,7 @@ def fig3_anticipatory_horizon() -> None:
         budget=_BUDGET, observation_interval=_F3_INTERVAL,
         lambda_horizon=lambda_h,
     )
-    am.queue_goal('emergency_landing', eta=eta_start)
+    am.queue_goal('emergency_landing', eta=eta_start, level='global')
 
     # Baseline: attention without any queued goal (pure Formula 1)
     kb_base = build_pv_inspection_kb()
@@ -319,7 +327,7 @@ def fig3_anticipatory_horizon() -> None:
 
     fig, ax = plt.subplots(figsize=(10, 4.5))
     ax.set_title(
-        f'Fig 3 — Anticipatory horizon  (Formula 2: e^{{−λΔt}},  λ={lambda_h})\n'
+        f'Fig 3 — Anticipatory horizon  (Formula 2: e^{{-λΔt}},  λ={lambda_h})\n'
         f'Emergency goal queued at t=0, ETA={eta_start}s  →  promotes at t≈{eta_start}s'
     )
 
@@ -376,7 +384,7 @@ def fig4_memory_budget() -> None:
         Left  — effective_max_distance = sqrt(B) - 1 vs budget B
         Right — number of concepts in attention window vs budget B
 
-    Confirms Formula 4: depth = √B − 1 and that the window grows predictably.
+    Confirms Formula 4: depth = √B - 1 and that the window grows predictably.
     """
     budgets = list(range(1, 51))
 
@@ -398,7 +406,7 @@ def fig4_memory_budget() -> None:
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
     fig.suptitle(
-        'Fig 4 — Memory budget constraint  (Formula 4: depth = √B − 1)',
+        'Fig 4 — Memory budget constraint  (Formula 4: depth = √B - 1)',
         fontsize=11,
     )
 
@@ -407,7 +415,7 @@ def fig4_memory_budget() -> None:
     # Overlay theoretical curve
     b_cont = np.linspace(1, 50, 200)
     ax1.plot(b_cont, np.sqrt(b_cont) - 1, color='#2196F3', linewidth=0.8,
-             linestyle='--', alpha=0.5, label='√B − 1  (theoretical)')
+             linestyle='--', alpha=0.5, label='√B - 1  (theoretical)')
     ax1.set_xlabel('Memory budget  B')
     ax1.set_ylabel('Effective max distance  (depth)')
     ax1.set_title('Search depth derived from budget')
@@ -440,6 +448,414 @@ def fig4_memory_budget() -> None:
 
 
 # ===========================================================================
+# Figure 5 — Class vs instance attention split  (D6.1 manufacturing testbed)
+# ===========================================================================
+
+def fig5_class_instance_split() -> None:
+    """
+    Two-panel stacked bar chart using the CoreSense D6.1 manufacturing scenario.
+
+    For each concept (classes left, instances right), bars are stacked to show:
+        • Class-gate contribution  — spreading activation from the goal class graph
+        • Relational boost         — additional attention from instance-graph proximity
+
+    Cross-class instances (class-gate = 0, relational > 0) are highlighted in
+    orange to make the cross-class effect visually explicit.
+
+    Left panel:  goal = assemble_gear_unit
+    Right panel: goal = transport_parts
+    """
+    kb  = build_manufacturing_d61_kb()
+    ikb = build_manufacturing_d61_instance_kb()
+
+    def _compute(goal: str) -> tuple[dict, dict, dict]:
+        """Return (class_attn, inst_attn_full, inst_relational_boost)."""
+        am = AwarenessManager(
+            kb, goal_id=goal,
+            budget=5, observation_interval=2.0,
+            instance_kb=ikb, instance_relational_weight=0.3,
+        )
+        am.tick(dt=0.0)   # single tick at dt=0 to compute attention without drift
+        full = am.attention()
+
+        class_attn = {cid: full.get(cid, 0.0) for cid in kb.concept_ids()}
+        inst_full  = {iid: full.get(iid, 0.0) for iid in ikb.instance_ids()}
+
+        # Relational boost = instance attention minus class-gate contribution
+        inst_boost: dict[str, float] = {}
+        for iid in ikb.instance_ids():
+            inst = ikb.get_instance(iid)
+            gate  = class_attn.get(inst.class_id, 0.0)
+            boost = max(0.0, inst_full[iid] - gate)
+            inst_boost[iid] = boost
+
+        return class_attn, inst_full, inst_boost
+
+    # ── Colour palette ─────────────────────────────────────────────────────
+    C_CLASS_ON   = '#2196F3'   # blue — attended class
+    C_CLASS_OFF  = '#CFD8DC'   # light grey — unattended class
+    C_INST_GATE  = '#4CAF50'   # green — instance class-gate contribution
+    C_INST_BOOST = '#FF9800'   # amber — relational boost on top of gate
+    C_CROSS_ONLY = '#F44336'   # red — cross-class (gate=0, boost>0)
+
+    goals = ['assemble_gear_unit', 'transport_parts']
+    titles = [
+        'goal: assemble_gear_unit\n(assembly robot, gears, shafts, fasteners)',
+        'goal: transport_parts\n(mobile robot, production machines)',
+    ]
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
+    fig.suptitle(
+        'Fig 5 — Class vs instance attention distribution  (CoreSense D6.1 Manufacturing Testbed)\n'
+        'Stacked bars: ■ class-gate  ■ relational boost.  '
+        'Cross-class instances (class gate = 0, boost > 0) shown in red.',
+        fontsize=10,
+    )
+
+    for ax, goal, title in zip(axes, goals, titles):
+        class_attn, inst_full, inst_boost = _compute(goal)
+
+        # ── Build ordered concept lists ──────────────────────────────────
+        # Classes sorted by attention descending
+        classes_sorted = sorted(kb.concept_ids(),
+                                key=lambda c: class_attn[c], reverse=True)
+        # Instances sorted by total attention descending
+        insts_sorted = sorted(ikb.instance_ids(),
+                              key=lambda i: inst_full[i], reverse=True)
+
+        all_labels   = classes_sorted + [''] + insts_sorted   # blank = visual gap
+        n_cls        = len(classes_sorted)
+        n_inst       = len(insts_sorted)
+        total        = len(all_labels)
+        xs           = np.arange(total)
+
+        bar_height   = 0.62
+
+        # ── Draw class bars ───────────────────────────────────────────────
+        for i, cid in enumerate(classes_sorted):
+            a = class_attn[cid]
+            color = C_CLASS_ON if a > 0.001 else C_CLASS_OFF
+            ax.bar(i, a, width=bar_height, color=color, alpha=0.88, zorder=3)
+
+        # ── Draw instance bars (stacked: gate + boost) ────────────────────
+        offset = n_cls + 1   # +1 for the gap
+        for j, iid in enumerate(insts_sorted):
+            xi = offset + j
+            inst    = ikb.get_instance(iid)
+            gate    = class_attn.get(inst.class_id, 0.0)
+            boost   = inst_boost[iid]
+            total_a = inst_full[iid]
+
+            is_cross_class = gate < 0.001 and total_a > 0.001
+
+            if is_cross_class:
+                # Entirely relational — draw in red
+                ax.bar(xi, total_a, width=bar_height,
+                       color=C_CROSS_ONLY, alpha=0.88, zorder=3)
+            else:
+                # Class-gate base
+                if gate > 0:
+                    ax.bar(xi, gate, width=bar_height,
+                           color=C_INST_GATE, alpha=0.88, zorder=3)
+                # Relational boost on top
+                if boost > 0.001:
+                    ax.bar(xi, boost, width=bar_height, bottom=gate,
+                           color=C_INST_BOOST, alpha=0.88, zorder=3)
+
+        # ── Divider line between classes and instances ────────────────────
+        ax.axvline(n_cls + 0.5, color='#999999', linewidth=1.0,
+                   linestyle='--', zorder=1)
+        ax.text(n_cls * 0.5,        0.97, 'classes',   ha='center',
+                va='top', fontsize=8, color='#555555',
+                transform=ax.get_xaxis_transform())
+        ax.text(n_cls + 1 + n_inst * 0.5, 0.97, 'instances', ha='center',
+                va='top', fontsize=8, color='#555555',
+                transform=ax.get_xaxis_transform())
+
+        # ── Axis formatting ───────────────────────────────────────────────
+        tick_labels = [c for c in classes_sorted] + [''] + list(insts_sorted)
+        ax.set_xticks(xs)
+        ax.set_xticklabels(tick_labels, rotation=40, ha='right', fontsize=7.5)
+        ax.set_ylabel('Attention  A')
+        ax.set_ylim(0, 1.08)
+        ax.set_title(title, fontsize=9.5)
+        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
+
+        # Annotate cross-class instances with a small marker
+        for j, iid in enumerate(insts_sorted):
+            xi = offset + j
+            inst = ikb.get_instance(iid)
+            gate = class_attn.get(inst.class_id, 0.0)
+            a    = inst_full[iid]
+            if gate < 0.001 and a > 0.001:
+                ax.text(xi, a + 0.02, '*', ha='center', va='bottom',
+                        fontsize=9, color=C_CROSS_ONLY, fontweight='bold')
+
+    # ── Shared legend ─────────────────────────────────────────────────────
+    from matplotlib.patches import Patch
+    legend_items = [
+        Patch(facecolor=C_CLASS_ON,   alpha=0.88, label='Class — attended'),
+        Patch(facecolor=C_CLASS_OFF,  alpha=0.88, label='Class — not attended'),
+        Patch(facecolor=C_INST_GATE,  alpha=0.88, label='Instance — class-gate contribution'),
+        Patch(facecolor=C_INST_BOOST, alpha=0.88, label='Instance — relational boost (on top)'),
+        Patch(facecolor=C_CROSS_ONLY, alpha=0.88, label='Instance — cross-class (gate=0, boost>0)  ✕'),
+    ]
+    fig.legend(handles=legend_items, loc='lower center', ncol=5,
+               fontsize=8, bbox_to_anchor=(0.5, -0.02))
+
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    path = _OUT / 'fig5_class_instance_split.png'
+    fig.savefig(path)
+    plt.close(fig)
+    print(f'[Fig 5]  saved → {path}')
+
+    # Console summary
+    for goal in goals:
+        class_attn, inst_full, inst_boost = _compute(goal)
+        print(f'         goal={goal}:')
+        cross = [(iid, inst_full[iid])
+                 for iid in ikb.instance_ids()
+                 if class_attn.get(ikb.get_instance(iid).class_id, 0.0) < 0.001
+                 and inst_full[iid] > 0.001]
+        print(f'           cross-class instances with attention: '
+              f'{[f"{i}({a:.3f})" for i, a in cross]}')
+
+
+# ===========================================================================
+# Figure 8 — Certainty threshold: refresh count vs epistemic error  (Phase 4)
+# ===========================================================================
+
+def fig8_certainty_threshold() -> None:
+    """
+    Two-panel figure illustrating the trade-off controlled by certainty_threshold.
+
+    The Probabilistic Forgetting gate suppresses scheduling for concepts whose
+    epistemic error E ≤ threshold — i.e. concepts that are already known
+    well enough. A tighter threshold allows more budget to be freed; a looser
+    one behaves like the vanilla AM.
+
+    Simulation:
+        PV-inspection scenario, goal=inspect_pv_field, 60 s at 0.1 s/tick.
+        Budget=2, observation_interval=10 s (Formula 3 calibrated to drift rate).
+        An observation event fires every 2 real ticks (0.2 sim-seconds).
+
+    Left panel:  cumulative refresh count over time for each threshold.
+    Right panel: mean epistemic error of attended concepts over time.
+
+    Thresholds compared:
+        τ = 0.00  (baseline — no gate)
+        τ = 0.03
+        τ = 0.07
+        τ = 0.12
+        τ = 0.20  (aggressive forgetting)
+    """
+    from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
+
+    kb = build_pv_inspection_kb()
+
+    thresholds  = [0.00, 0.03, 0.07, 0.12, 0.20]
+    colors      = ['#607D8B', '#2196F3', '#4CAF50', '#FF9800', '#F44336']
+    labels      = [f'τ = {τ:.2f}' for τ in thresholds]
+
+    sim_duration    = 60.0
+    dt              = 0.1
+    obs_every_ticks = 2    # fire observation every N ticks
+    n_ticks         = int(sim_duration / dt)
+    times           = np.arange(n_ticks) * dt
+
+    fig, (ax_count, ax_err) = plt.subplots(1, 2, figsize=(10, 4))
+
+    for τ, color, label in zip(thresholds, colors, labels):
+        am = AwarenessManager(
+            kb,
+            goal_id='inspect_pv_field',
+            budget=_BUDGET,
+            alpha=_ALPHA,
+            observation_interval=_F3_INTERVAL,
+            certainty_threshold=τ,
+        )
+
+        cum_refreshes: list[int] = []
+        mean_errors:   list[float] = []
+        total_refreshes = 0
+
+        for tick in range(n_ticks):
+            schedule = am.tick(dt=dt)
+
+            if tick % obs_every_ticks == 0:
+                for cid in schedule:
+                    am.observe(cid)
+                    total_refreshes += 1
+
+            cum_refreshes.append(total_refreshes)
+
+            # Mean E of currently attended concepts (A > 0.05)
+            attn = am.attention()
+            attended_errors = [
+                am._kb.get_concept(cid).epistemic_error
+                for cid in kb.concept_ids()
+                if attn.get(cid, 0.0) > 0.05 and am._kb.get_concept(cid).decay_rate > 0
+            ]
+            mean_errors.append(float(np.mean(attended_errors)) if attended_errors else 0.0)
+
+        ax_count.plot(times, cum_refreshes, color=color, label=label, linewidth=1.8)
+        ax_err.plot(  times, mean_errors,   color=color, label=label, linewidth=1.8)
+
+    ax_count.set_xlabel('Simulation time  (s)')
+    ax_count.set_ylabel('Cumulative refresh count')
+    ax_count.set_title('Budget usage: refreshes over time')
+    ax_count.legend(fontsize=8.5)
+    ax_count.set_xlim(0, sim_duration)
+
+    ax_err.set_xlabel('Simulation time  (s)')
+    ax_err.set_ylabel('Mean epistemic error  E')
+    ax_err.set_title('Information quality: mean E of attended concepts')
+    ax_err.legend(fontsize=8.5)
+    ax_err.set_xlim(0, sim_duration)
+    ax_err.set_ylim(bottom=0)
+
+    fig.suptitle(
+        'Probabilistic Forgetting — certainty threshold trade-off\n'
+        'Higher τ skips already-known concepts, freeing budget for uncertain ones',
+        fontsize=10,
+    )
+    fig.tight_layout()
+    path = _OUT / 'fig8_certainty_threshold.png'
+    fig.savefig(path)
+    plt.close(fig)
+    print(f'[Fig 8]  saved → {path}')
+
+    # Console summary: final refresh counts
+    print(f'         {"threshold":>10}  {"total refreshes":>16}')
+    for τ, label in zip(thresholds, labels):
+        am = AwarenessManager(
+            kb, goal_id='inspect_pv_field', budget=_BUDGET,
+            alpha=_ALPHA, observation_interval=_F3_INTERVAL,
+            certainty_threshold=τ,
+        )
+        count = 0
+        for tick in range(n_ticks):
+            schedule = am.tick(dt=dt)
+            if tick % obs_every_ticks == 0:
+                for cid in schedule:
+                    am.observe(cid)
+                    count += 1
+        print(f'         {τ:>10.2f}  {count:>16}')
+
+
+# ===========================================================================
+# Figure 9 — Hierarchical attention blending over time  (Phase 5)
+# ===========================================================================
+
+def fig9_hierarchical_horizons() -> None:
+    """
+    Shows how three hierarchy levels (global / phase / task) blend differently
+    into current attention as a queued goal's ETA counts down to zero.
+
+    Scenario: PV inspection is active. 'emergency_landing' is queued at
+    three different ETAs (60 s) using each level in turn. We plot the
+    attention on 'drone_battery' (a concept that gains attention under
+    emergency_landing) as a function of ETA ticking down from 60 s to 0.
+
+    At ETA=0 the goal promotes; before that the anticipatory boost is purely
+    from the queued entry at each level's λ rate.
+
+    Left panel:  attention on 'drone_battery' vs ETA remaining (for each level)
+    Right panel: attention on 'drone_battery' vs wall-clock sim time (same run)
+    """
+    from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
+
+    concept_of_interest = 'drone_battery'
+    eta_start = 60.0
+    levels = ['global', 'phase', 'task']
+    level_colors = {'global': '#607D8B', 'phase': '#FF9800', 'task': '#F44336'}
+    lambdas     = {'global': 0.05, 'phase': 0.20, 'task': 0.50}
+
+    # For the ETA-sweep panel: compute analytically
+    # A_boost(eta) = e^{-λ x eta} x A_emergency(drone_battery)
+    kb_ref = build_pv_inspection_kb()
+    am_ref = AwarenessManager(kb_ref, goal_id='emergency_landing', budget=5, alpha=_ALPHA)
+    a_emergency = am_ref.attention().get(concept_of_interest, 0.0)
+
+    kb_base = build_pv_inspection_kb()
+    am_base = AwarenessManager(kb_base, goal_id='inspect_pv_field', budget=5, alpha=_ALPHA)
+    a_current = am_base.attention().get(concept_of_interest, 0.0)
+
+    etas = np.linspace(eta_start, 0.0, 300)
+
+    fig, (ax_eta, ax_time) = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    # ── Left panel: analytic attention vs ETA ─────────────────────────────
+    for lvl in levels:
+        lam = lambdas[lvl]
+        discounts = np.exp(-lam * etas)
+        attn_vals = np.minimum(1.0, a_current + discounts * a_emergency)
+        ax_eta.plot(etas, attn_vals, color=level_colors[lvl],
+                    label=f"level='{lvl}'  (λ={lam})", linewidth=2)
+
+    ax_eta.axhline(a_current,   color='#2196F3', linestyle='--', linewidth=1,
+                   label=f'current goal baseline  (A={a_current:.2f})')
+    ax_eta.axhline(a_emergency, color='#4CAF50', linestyle='--', linewidth=1,
+                   label=f'target goal maximum  (A={a_emergency:.2f})')
+    ax_eta.set_xlabel('ETA to emergency_landing  (s)')
+    ax_eta.set_ylabel(f'Attention on {concept_of_interest}')
+    ax_eta.set_title('Anticipatory boost vs ETA (analytic)')
+    ax_eta.invert_xaxis()   # time flows left → right: far future on left
+    ax_eta.legend(fontsize=8.5)
+    ax_eta.set_xlim(eta_start, 0)
+    ax_eta.set_ylim(0, 1.05)
+
+    # ── Right panel: simulated attention over wall-clock time ─────────────
+    dt        = 0.1
+    n_ticks   = int((eta_start + 5.0) / dt)  # 5 s extra post-promotion
+    times_all = np.arange(n_ticks) * dt
+
+    for lvl in levels:
+        kb = build_pv_inspection_kb()
+        am = AwarenessManager(kb, goal_id='inspect_pv_field', budget=5, alpha=_ALPHA)
+        am.queue_goal('emergency_landing', eta=eta_start, level=lvl)
+
+        attn_series = []
+        for _ in range(n_ticks):
+            am.tick(dt=dt)
+            attn_series.append(am.attention().get(concept_of_interest, 0.0))
+
+        ax_time.plot(times_all, attn_series, color=level_colors[lvl],
+                     label=f"level='{lvl}'", linewidth=1.8)
+
+    ax_time.axvline(eta_start, color='#555', linestyle=':', linewidth=1,
+                    label='goal promoted (t=60 s)')
+    ax_time.set_xlabel('Simulation time  (s)')
+    ax_time.set_ylabel(f'Attention on {concept_of_interest}')
+    ax_time.set_title('Simulated attention over time')
+    ax_time.legend(fontsize=8.5)
+    ax_time.set_xlim(0, eta_start + 5.0)
+    ax_time.set_ylim(0, 1.05)
+
+    fig.suptitle(
+        'Hierarchical Mission Horizons — global / phase / task level comparison\n'
+        f'Queued goal: emergency_landing at ETA={eta_start} s   '
+        f'Concept tracked: {concept_of_interest}',
+        fontsize=10,
+    )
+    fig.tight_layout()
+    path = _OUT / 'fig9_hierarchical_horizons.png'
+    fig.savefig(path)
+    plt.close(fig)
+    print(f'[Fig 9]  saved → {path}')
+
+    # Console: attention on drone_battery at selected ETAs for each level
+    print(f'         {"ETA (s)":>8}  ' + '  '.join(f'{lvl:>8}' for lvl in levels))
+    for eta_sample in [60.0, 30.0, 10.0, 5.0, 1.0]:
+        row = f'         {eta_sample:>8.1f}  '
+        for lvl in levels:
+            lam = lambdas[lvl]
+            a = min(1.0, a_current + math.exp(-lam * eta_sample) * a_emergency)
+            row += f'{a:>10.4f}'
+        print(row)
+
+
+# ===========================================================================
 # Main
 # ===========================================================================
 
@@ -456,6 +872,12 @@ def main() -> None:
     fig3_anticipatory_horizon()
     print()
     fig4_memory_budget()
+    print()
+    fig5_class_instance_split()
+    print()
+    fig8_certainty_threshold()
+    print()
+    fig9_hierarchical_horizons()
 
     print()
     print('=' * 60)

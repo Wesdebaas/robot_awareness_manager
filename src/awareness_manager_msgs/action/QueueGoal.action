@@ -1,0 +1,13 @@
+# Goal: queue a future mission goal
+string goal_id
+float64 eta
+string level
+---
+# Result: published when ETA reaches zero and goal is promoted
+bool promoted
+string promoted_goal_id
+---
+# Feedback: published every tick while goal is pending
+string goal_id
+float64 current_eta
+float64 attention_boost

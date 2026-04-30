@@ -15,10 +15,14 @@ Controls:
     Click a non-task node  — manual observation (refresh)
     Click a task node      — switch to that mission goal
     RadioButtons (right)   — switch active goal from the list
+    "Show instances" checkbox — toggle instance node layer on/off
 """
 
 from awareness_manager.awareness_manager import AwarenessManager
-from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
+from awareness_manager.scenarios.pv_inspection import (
+    build_pv_inspection_kb,
+    build_pv_inspection_instance_kb,
+)
 from awareness_manager.visualizer import KBVisualizer
 
 _REFRESH_INTERVAL = 2.0    # real seconds between observations (observation cadence)
@@ -26,18 +30,21 @@ _FORMULA3_INTERVAL = 10.0  # simulated seconds each observation compensates for 
 
 
 def main() -> None:
-    kb = build_pv_inspection_kb()
-    am = AwarenessManager(
+    kb  = build_pv_inspection_kb()
+    ikb = build_pv_inspection_instance_kb()
+    am  = AwarenessManager(
         kb,
         goal_id='inspect_pv_field',
         budget=2,
         observation_interval=_FORMULA3_INTERVAL,
         lambda_horizon=0.1,   # gentle anticipatory slope over 30 simulated seconds
+        instance_kb=ikb,
+        instance_relational_weight=0.3,
     )
     # Formula 2: queue emergency_landing 30 simulated seconds from now.
     # With sim_interval=0.1, 30 sim-seconds = 300 real-world ticks ≈ 30 real seconds.
     # Watch drone_battery and landing_zone nodes slowly grow during inspection.
-    am.queue_goal('emergency_landing', eta=30.0)
+    am.queue_goal('emergency_landing', eta=30.0, level='global')
 
     viz = KBVisualizer(
         kb,
@@ -47,6 +54,7 @@ def main() -> None:
         awareness_manager=am,
         refresh_interval=_REFRESH_INTERVAL,
         highlight_duration=1.5,
+        instance_kb=ikb,
     )
 
     print("=" * 70)
@@ -54,6 +62,7 @@ def main() -> None:
     print("  Goal: inspect_pv_field → emergency_landing queued at t=30s")
     print("  Formula 2: watch battery/landing nodes grow as ETA approaches 0.")
     print("  Formula 4: attention depth bounded by memory budget (default off).")
+    print("  Tick 'Show instances' in the panel to reveal instance nodes.")
     print("=" * 70)
 
     viz.start()

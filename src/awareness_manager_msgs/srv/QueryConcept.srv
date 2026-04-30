@@ -1,0 +1,9 @@
+# Request: which concept to look up
+string concept_id
+---
+# Response: current state of that concept
+string concept_id
+float64 epistemic_error
+float64 attention
+float64 priority
+bool found

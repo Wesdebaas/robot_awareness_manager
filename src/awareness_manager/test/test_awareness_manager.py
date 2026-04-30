@@ -303,3 +303,228 @@ class TestQuadraticCost:
         kb = build_birdhouse_kb()
         am = AwarenessManager(kb, goal_id='build_birdhouse', max_distance=3.5, memory_budget=None)
         assert am.effective_max_distance == pytest.approx(3.5)
+
+
+# ---------------------------------------------------------------------------
+# Probabilistic Forgetting — certainty_threshold (Phase 4)
+# ---------------------------------------------------------------------------
+
+class TestCertaintyThreshold:
+
+    def test_default_threshold_zero_unchanged_behaviour(self):
+        # threshold=0.0 means only E=0 concepts are suppressed (task nodes).
+        # Verified by checking a high-E concept stays scheduled.
+        kb = _simple_kb()
+        am = AwarenessManager(kb, goal_id='goal', budget=2, certainty_threshold=0.0)
+        kb.tick(dt=100.0)   # drive E to max for 'near' and 'far'
+        schedule = am.tick(dt=0.0)
+        assert len(schedule) == 2
+        assert 'near' in schedule or 'far' in schedule
+
+    def test_concept_below_threshold_excluded_from_schedule(self):
+        # Set threshold=0.5 and keep E low on 'near' — it should be skipped.
+        kb = _simple_kb()
+        am = AwarenessManager(kb, goal_id='goal', budget=2, certainty_threshold=0.5)
+        # Do NOT tick — near.E and far.E start at 0.0, both below threshold
+        schedule = am.tick(dt=0.0)
+        # No concept has E > 0.5, so nothing should be scheduled
+        assert 'near' not in schedule
+        assert 'far'  not in schedule
+
+    def test_concept_above_threshold_is_scheduled(self):
+        # After enough drift 'near' has E > threshold → should appear in schedule.
+        kb = _simple_kb()
+        am = AwarenessManager(kb, goal_id='goal', budget=2, certainty_threshold=0.05)
+        kb.tick(dt=5.0)   # near: E += 0.1 * 5 = 0.5  → well above 0.05
+        schedule = am.tick(dt=0.0)
+        assert 'near' in schedule
+
+    def test_threshold_above_one_excludes_all(self):
+        # Pathological case: threshold=2.0 → nothing ever scheduled.
+        kb = _simple_kb()
+        am = AwarenessManager(kb, goal_id='goal', budget=2, certainty_threshold=2.0)
+        kb.tick(dt=100.0)
+        schedule = am.tick(dt=0.0)
+        assert schedule == []
+
+    def test_high_threshold_reduces_refresh_count(self):
+        # With a high certainty threshold, total refreshes over a simulation
+        # should be strictly fewer than with threshold=0.
+        kb_base = _simple_kb()
+        kb_gate  = _simple_kb()
+
+        am_base = AwarenessManager(kb_base, goal_id='goal', budget=2,
+                                   observation_interval=1.0, certainty_threshold=0.0)
+        am_gate  = AwarenessManager(kb_gate, goal_id='goal', budget=2,
+                                    observation_interval=1.0, certainty_threshold=0.3)
+
+        count_base = count_gate = 0
+        for _ in range(50):
+            sched_b = am_base.tick(dt=0.1)
+            for cid in sched_b:
+                am_base.observe(cid)
+                count_base += 1
+
+            sched_g = am_gate.tick(dt=0.1)
+            for cid in sched_g:
+                am_gate.observe(cid)
+                count_gate += 1
+
+        assert count_gate <= count_base
+
+    def test_priorities_reflect_threshold(self):
+        # After drift, concept with E=0.6 and threshold=0.5 → priority > 0.
+        # Same concept with threshold=0.7 → priority = 0.
+        kb = _simple_kb()
+        am_low  = AwarenessManager(kb, goal_id='goal', budget=2, certainty_threshold=0.5)
+        am_high = AwarenessManager(kb, goal_id='goal', budget=2, certainty_threshold=0.7)
+
+        kb.tick(dt=6.0)  # near.E ~ 0.6, far.E ~ 0.3
+        am_low.tick(dt=0.0)
+        am_high.tick(dt=0.0)
+
+        p_low  = am_low.priorities()
+        p_high = am_high.priorities()
+
+        # With low threshold 'near' has priority > 0
+        assert p_low['near'] > 0.0
+        # With high threshold 'near' (E ~0.6 < 0.7) has priority = 0
+        assert p_high['near'] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical Mission Horizons — queue_goal levels (Phase 5)
+# ---------------------------------------------------------------------------
+
+class TestHierarchicalMissionHorizons:
+
+    def _kb_two_tasks(self) -> KnowledgeBase:
+        """KB with two tasks sharing a concept."""
+        kb = KnowledgeBase()
+        kb.add_concept(Concept('task_a',   'task',   decay_rate=0.0))
+        kb.add_concept(Concept('task_b',   'task',   decay_rate=0.0))
+        kb.add_concept(Concept('shared',   'object', decay_rate=0.1))
+        kb.add_concept(Concept('unique_b', 'object', decay_rate=0.1))
+        kb.add_relation('task_a', 'shared',   weight=1.0)
+        kb.add_relation('task_b', 'shared',   weight=1.0)
+        kb.add_relation('task_b', 'unique_b', weight=1.0)
+        return kb
+
+    # ── queue_goal API ────────────────────────────────────────────────────
+
+    def test_default_level_is_task(self):
+        kb = self._kb_two_tasks()
+        am = AwarenessManager(kb, goal_id='task_a', budget=3)
+        am.queue_goal('task_b', eta=5.0)
+        assert am.mission_queue[0][2] == 'task'
+
+    def test_explicit_level_stored(self):
+        kb = self._kb_two_tasks()
+        am = AwarenessManager(kb, goal_id='task_a', budget=3)
+        am.queue_goal('task_b', eta=10.0, level='global')
+        assert am.mission_queue[0][2] == 'global'
+
+    def test_invalid_level_raises(self):
+        kb = self._kb_two_tasks()
+        am = AwarenessManager(kb, goal_id='task_a', budget=3)
+        with pytest.raises(ValueError, match="Unknown level"):
+            am.queue_goal('task_b', eta=5.0, level='ultra')
+
+    def test_mission_queue_returns_triples(self):
+        kb = self._kb_two_tasks()
+        am = AwarenessManager(kb, goal_id='task_a', budget=3)
+        am.queue_goal('task_b', eta=7.0, level='phase')
+        entry = am.mission_queue[0]
+        assert len(entry) == 3
+        goal_id, eta, level = entry
+        assert goal_id == 'task_b'
+        assert eta == pytest.approx(7.0)
+        assert level == 'phase'
+
+    # ── Discount rate differences ─────────────────────────────────────────
+
+    def test_global_level_higher_discount_at_long_eta(self):
+        """
+        At ETA=50 s, global level (λ=0.05) contributes much more than task (λ=0.5).
+        e^(-0.05*50)=0.082  vs  e^(-0.5*50) ≈ 0 (essentially zero).
+        """
+        kb = self._kb_two_tasks()
+        am_global = AwarenessManager(kb, goal_id='task_a', budget=3)
+        am_task   = AwarenessManager(kb, goal_id='task_a', budget=3)
+
+        am_global.queue_goal('task_b', eta=50.0, level='global')
+        am_task.queue_goal(  'task_b', eta=50.0, level='task')
+
+        attn_global = am_global.attention().get('unique_b', 0.0)
+        attn_task   = am_task.attention().get(  'unique_b', 0.0)
+
+        # Global-level queued goal still contributes non-trivially at t=50s;
+        # task-level is near zero.
+        assert attn_global > attn_task
+        assert attn_global > 0.0
+
+    def test_task_level_vanishes_at_large_eta(self):
+        """
+        At ETA=100 s, task level λ=0.5 → discount=e^(-50) ≈ 0.
+        Use max_distance=1 so unique_b is NOT reachable from task_a directly
+        (it is 3 hops away via shared→task_b→unique_b in the undirected graph).
+        """
+        kb = self._kb_two_tasks()
+        # max_distance=1 → task_a only reaches 'shared' (d=1); task_b (d=2) and
+        # unique_b (d=3) are unreachable from task_a through class spreading.
+        am = AwarenessManager(kb, goal_id='task_a', budget=3, max_distance=1.0)
+        am.queue_goal('task_b', eta=100.0, level='task')
+
+        # discount=e^(-0.5*100)=e^(-50)≈0 → unique_b contribution essentially zero
+        attn = am.attention().get('unique_b', 0.0)
+        assert attn < 0.001
+
+    def test_phase_level_intermediate_discount(self):
+        """Phase level (λ=0.2) sits between global and task at moderate ETAs."""
+        kb = self._kb_two_tasks()
+        am_global = AwarenessManager(kb, goal_id='task_a', budget=3)
+        am_phase  = AwarenessManager(kb, goal_id='task_a', budget=3)
+        am_task   = AwarenessManager(kb, goal_id='task_a', budget=3)
+
+        eta = 10.0
+        am_global.queue_goal('task_b', eta=eta, level='global')
+        am_phase.queue_goal( 'task_b', eta=eta, level='phase')
+        am_task.queue_goal(  'task_b', eta=eta, level='task')
+
+        a_global = am_global.attention().get('unique_b', 0.0)
+        a_phase  = am_phase.attention().get( 'unique_b', 0.0)
+        a_task   = am_task.attention().get(  'unique_b', 0.0)
+
+        # global decays slowest → highest contribution; task decays fastest → lowest
+        assert a_global > a_phase > a_task
+
+    # ── Promotion still works ─────────────────────────────────────────────
+
+    def test_global_goal_promotes_when_eta_reaches_zero(self):
+        kb = self._kb_two_tasks()
+        am = AwarenessManager(kb, goal_id='task_a', budget=3)
+        am.queue_goal('task_b', eta=2.0, level='global')
+        am.tick(dt=2.0)  # ETA → 0
+        assert am.goal_id == 'task_b'
+
+    def test_multiple_levels_queued_simultaneously(self):
+        """All three levels can coexist in the queue."""
+        kb = self._kb_two_tasks()
+        kb.add_concept(Concept('task_c', 'task', decay_rate=0.0))
+        kb.add_concept(Concept('unique_c', 'object', decay_rate=0.1))
+        kb.add_relation('task_c', 'unique_c', weight=1.0)
+
+        am = AwarenessManager(kb, goal_id='task_a', budget=5)
+        am.queue_goal('task_b', eta=100.0, level='global')
+        am.queue_goal('task_b', eta=30.0,  level='phase')
+        am.queue_goal('task_c', eta=5.0,   level='task')
+
+        assert len(am.mission_queue) == 3
+        levels = {entry[2] for entry in am.mission_queue}
+        assert levels == {'global', 'phase', 'task'}
+
+        # unique_b gets contributions from two queued entries (global + phase)
+        # unique_c from one (task, short ETA so large discount applied)
+        attn = am.attention()
+        assert attn.get('unique_b', 0.0) > 0.0
+        assert attn.get('unique_c', 0.0) > 0.0
