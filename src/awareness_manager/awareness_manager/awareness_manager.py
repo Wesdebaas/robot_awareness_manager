@@ -9,16 +9,16 @@ if TYPE_CHECKING:
 
 
 _LAMBDA_BY_LEVEL: dict[str, float] = {
-    'global': 0.05,   # very slow decay — keeps long-horizon background awareness
-    'phase':  0.20,   # medium decay  — phase-level planning window
-    'task':   0.50,   # fast decay    — near-future task pre-tuning (legacy default)
+    'global': 0.05,   # very slow decay - keeps long-horizon background awareness
+    'phase':  0.20,   # medium decay  - phase-level planning window
+    'task':   0.50,   # fast decay    - near-future task pre-tuning (legacy default)
 }
 """Per-level anticipatory discount rates for Hierarchical Mission Horizons."""
 
 
 class AwarenessManager:
     """
-    Awareness Manager — sits on top of the KnowledgeBase and answers:
+    Awareness Manager - sits on top of the KnowledgeBase and answers:
     "Which concepts should the robot observe right now?"
 
     Operates at two levels simultaneously:
@@ -30,30 +30,30 @@ class AwarenessManager:
     to active instances receive a scaled relational boost.
 
     Each tick the AM:
-        1. Advances epistemic drift (kb.tick + instance_kb.tick)        — Formula 5
-        2. Advances the mission queue, promoting goals whose ETA ≤ 0    — Formula 2
-        3. Recomputes class attention from current goal + queued goals   — Formulas 1+2
-        4. Computes instance attention from class attention              — Formulas 1+2
+        1. Advances epistemic drift (kb.tick + instance_kb.tick)        - Formula 5
+        2. Advances the mission queue, promoting goals whose ETA ≤ 0    - Formula 2
+        3. Recomputes class attention from current goal + queued goals   - Formulas 1+2
+        4. Computes instance attention from class attention              - Formulas 1+2
         5. Ranks ALL concepts (class + instance) by priority = E x A
         6. Returns the top-N concept IDs as the refresh schedule
 
     Observations are executed via observe(), which applies Formula 3 to compute
     how much epistemic error to reduce:
 
-        Formula 3 — Utility Saturation:  refresh(n) = 1 - e^(-δ(n) x T)
+        Formula 3 - Utility Saturation:  refresh(n) = 1 - e^(-δ(n) x T)
 
     where δ(n) is the concept's decay rate and T is the observation interval.
     This calibrates the refresh amount to the drift accumulated since the last
     observation: slow-decaying concepts get a small refresh, fast-decaying ones
-    get a larger one — each observation exactly compensates for what was lost.
+    get a larger one - each observation exactly compensates for what was lost.
 
-    Formula 2 — Anticipatory Horizon:
+    Formula 2 - Anticipatory Horizon:
         A_combined(c) = A_current(c) + Σ_i [ e^{-λ x Δt_i} x A_i(c) ]
     Queued goals contribute attention proportional to their proximity in time.
     As ETA decreases, the discount e^{-λΔt} rises toward 1, causing the robot
     to gradually pre-tune its awareness for the upcoming goal before it activates.
 
-    Formula 4 — Quadratic Cost Constraint:
+    Formula 4 - Quadratic Cost Constraint:
         depth = √B - 1
     The number of graph nodes reachable within depth d grows as (1+d)². Given
     memory budget B, the maximum search depth is √B - 1, replacing the fixed
@@ -62,7 +62,7 @@ class AwarenessManager:
     Priority formula:
         priority(c) = E(c) x A(c)
 
-    Task nodes have decay_rate=0 so E stays 0 and priority stays 0 — they are
+    Task nodes have decay_rate=0 so E stays 0 and priority stays 0 - they are
     never scheduled.
     """
 
@@ -115,7 +115,7 @@ class AwarenessManager:
                                        instance_kb is provided.
             certainty_threshold:       Probabilistic Forgetting gate (Phase 4).
                                        If a concept's epistemic error E ≤ this value
-                                       its scheduling priority is forced to 0 —
+                                       its scheduling priority is forced to 0 -
                                        the concept is considered sufficiently known
                                        and budget is redirected to uncertain concepts.
                                        Default 0.0 disables the gate (matches
@@ -144,6 +144,13 @@ class AwarenessManager:
         self._certainty_threshold = certainty_threshold
         self._fc = feature_config if feature_config is not None else FeatureConfig()
         self._attention: dict[str, float] = {}
+
+        # Per-channel attention contributions - stashed in _recompute_attention()
+        # for Phase 2 introspection (channel breakdown tooltip, color-by-source).
+        self._channel_mission: dict[str, float] = {}
+        self._channel_anticipatory: dict[str, float] = {}
+        self._channel_relational: dict[str, float] = {}
+        self._channel_surprise: dict[str, float] = {}
 
         # Mission queue: ordered list of (goal_id, time_remaining, level) triples.
         # level is one of 'global' | 'phase' | 'task'.
@@ -177,7 +184,7 @@ class AwarenessManager:
         return self._goal_id
 
     # ------------------------------------------------------------------
-    # Formula 4 — Quadratic Cost Constraint
+    # Formula 4 - Quadratic Cost Constraint
     # ------------------------------------------------------------------
 
     @property
@@ -193,7 +200,7 @@ class AwarenessManager:
         return self._max_distance
 
     # ------------------------------------------------------------------
-    # Formula 2 — Mission queue / Anticipatory Horizon
+    # Formula 2 - Mission queue / Anticipatory Horizon
     # ------------------------------------------------------------------
 
     def queue_goal(self, goal_id: str, eta: float, level: str = 'task') -> None:
@@ -205,13 +212,13 @@ class AwarenessManager:
         current attention window, discounted by e^{-λ_level x ETA} (Formula 2).
 
         Hierarchical Mission Horizons (Phase 5):
-            level='global'  λ = 0.05  — strategic background awareness; a goal
+            level='global'  λ = 0.05  - strategic background awareness; a goal
                                          100 s away still contributes ~0.01 x A.
                                          Use for overarching mission objectives.
-            level='phase'   λ = 0.20  — operational planning window; a goal 20 s
+            level='phase'   λ = 0.20  - operational planning window; a goal 20 s
                                          away contributes ~0.02 x A, 5 s away ~0.37.
                                          Use for mission phases (e.g. "after inspection").
-            level='task'    λ = 0.50  — near-future pre-tuning (legacy default);
+            level='task'    λ = 0.50  - near-future pre-tuning (legacy default);
                                          a goal 5 s away contributes ~0.08 x A,
                                          1 s away ~0.61 x A.
                                          Use for the next immediate sub-task.
@@ -225,7 +232,7 @@ class AwarenessManager:
         Args:
             goal_id: A concept ID that must exist in the knowledge base.
             eta:     Simulated seconds until this goal becomes active. Must be > 0.
-            level:   Hierarchy level — 'global', 'phase', or 'task'. Controls the
+            level:   Hierarchy level - 'global', 'phase', or 'task'. Controls the
                      anticipatory discount rate λ. Default 'task' matches the
                      legacy single-λ behaviour (lambda_horizon=0.5).
         """
@@ -255,9 +262,9 @@ class AwarenessManager:
         Advance simulation by dt seconds and return the refresh schedule.
 
         Steps:
-            1. kb.tick(dt) — passive epistemic drift on class concepts       (Formula 5)
-               instance_kb.tick(dt) — drift on instance concepts (if present)(Formula 5)
-            2. _advance_mission_queue(dt) — decrement ETAs, promote arrived goals (Formula 2)
+            1. kb.tick(dt) - passive epistemic drift on class concepts       (Formula 5)
+               instance_kb.tick(dt) - drift on instance concepts (if present)(Formula 5)
+            2. _advance_mission_queue(dt) - decrement ETAs, promote arrived goals (Formula 2)
             3. Recompute class attention (current goal + discounted future goals)  (Formulas 1+2)
                Compute instance attention from class attention                     (Formulas 1+2)
             4. Rank ALL concepts (class + instance) by priority = E x A (descending)
@@ -279,7 +286,7 @@ class AwarenessManager:
 
     def observe(self, concept_id: str) -> float:
         """
-        Formula 3 — Utility Saturation: execute one observation on concept_id.
+        Formula 3 - Utility Saturation: execute one observation on concept_id.
 
         Computes the refresh amount as:
             refresh(n) = 1 - e^(-δ(n) x observation_interval)
@@ -331,14 +338,14 @@ class AwarenessManager:
 
         Combines a normal refresh (Formula 3) with expectation-violation checking.
         On the first call for a concept, predicted_value is unset so no violation
-        is possible — the observed value becomes the initial prediction.
+        is possible - the observed value becomes the initial prediction.
 
         Violation handling (triggered when |observed − predicted| ≥ threshold):
 
           Relational channel (instance graph):
             Direct instance-graph neighbors of the violated concept have their
-            epistemic error spiked by epsilon × relational_spike_factor.
-            This bypasses the budget scheduler — the spike is immediate.
+            epistemic error spiked by epsilon x relational_spike_factor.
+            This bypasses the budget scheduler - the spike is immediate.
 
           Semantic channel (class graph):
             The class concept (for instances) or the concept itself (for classes)
@@ -400,12 +407,12 @@ class AwarenessManager:
 
         Relational channel:
             Immediate epistemic-error spike to all direct instance-graph neighbors
-            of the violated node. Spike magnitude = epsilon × relational_spike_factor.
+            of the violated node. Spike magnitude = epsilon x relational_spike_factor.
 
         Semantic channel:
             One-tick attention boost stored in _violation_boosts for the violated
             class (or the class of the violated instance) and its 1-hop class-graph
-            neighbors. Boost magnitude = current_attention × epsilon.
+            neighbors. Boost magnitude = current_attention x epsilon.
             Applied and cleared in the next _recompute_attention() call.
         """
         # Determine the class-level node to propagate from semantically
@@ -456,7 +463,7 @@ class AwarenessManager:
         Current priority for every concept. Snapshot, not live.
 
         Priority formula (Probabilistic Forgetting gate applied):
-            P(c) = E(c) × A(c)   if E(c) > certainty_threshold
+            P(c) = E(c) x A(c)   if E(c) > certainty_threshold
             P(c) = 0              if E(c) ≤ certainty_threshold
 
         The certainty gate prevents wasting budget re-observing concepts that
@@ -526,6 +533,64 @@ class AwarenessManager:
         """The attached InstanceKnowledgeBase, or None if not set."""
         return self._instance_kb
 
+    @property
+    def kb(self) -> KnowledgeBase:
+        """The class-level knowledge base."""
+        return self._kb
+
+    @property
+    def budget(self) -> int:
+        """Maximum concepts to schedule per tick (top-N)."""
+        return self._budget
+
+    @property
+    def memory_budget(self) -> 'int | None':
+        """Formula 4 memory budget B, or None if disabled."""
+        return self._memory_budget
+
+    def attention_channels(self) -> dict[str, dict[str, float]]:
+        """
+        Per-channel attention contributions from the last _recompute_attention().
+        Snapshot, not live.
+
+        Keys:
+            'mission'       - F1 spreading activation from the current goal only.
+            'anticipatory'  - F2 contributions summed across all queued goals.
+            'relational'    - instance-graph relational boost above class-gate baseline.
+            'surprise'      - one-tick violation boosts from observe_with_feedback().
+        """
+        return {
+            'mission': dict(self._channel_mission),
+            'anticipatory': dict(self._channel_anticipatory),
+            'relational': dict(self._channel_relational),
+            'surprise': dict(self._channel_surprise),
+        }
+
+    def strategy_name(self) -> str:
+        """AttentionStrategy interface - identifies this strategy in trace metadata."""
+        return "awareness_manager"
+
+    def strategy_params(self) -> dict:
+        """
+        AttentionStrategy interface - full hyperparameter set for trace metadata.
+        Replaces direct access to private attributes in TraceLogger._build_meta().
+        """
+        return {
+            "alpha": self._alpha,
+            "budget": self._budget,
+            "observation_interval": self._observation_interval,
+            "lambda_horizon": self._lambda_horizon,
+            "memory_budget": self._memory_budget,
+            "instance_relational_weight": self._instance_relational_weight,
+            "feature_config": {
+                "f1": self._fc.use_f1_spreading_activation,
+                "f2": self._fc.use_f2_anticipatory_horizon,
+                "f3": self._fc.use_f3_utility_saturation,
+                "f4": self._fc.use_f4_memory_budget,
+                "f5": self._fc.use_f5_epistemic_drift,
+            },
+        }
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -535,7 +600,7 @@ class AwarenessManager:
         Decrement all ETAs by dt and promote goals whose ETA has reached 0.
 
         Multiple goals may promote in one tick if dt is large. Each promotion
-        calls set_goal() internally so attention is NOT recomputed here —
+        calls set_goal() internally so attention is NOT recomputed here -
         _recompute_attention() is called once after this method returns.
         """
         updated = [(gid, eta - dt, lvl) for gid, eta, lvl in self._mission_queue]
@@ -544,7 +609,6 @@ class AwarenessManager:
         self._mission_queue = [(gid, eta, lvl) for gid, eta, lvl in updated if eta > 0.0]
 
         for gid, _, _lvl in promoted:
-            print(f"[QUEUE ]  '{gid}' promoted → new active goal")
             self._goal_id = gid
 
     def _recompute_attention(self) -> None:
@@ -564,14 +628,23 @@ class AwarenessManager:
         Instance attention (if instance_kb is set):
             combined[i] = A_class[class_of(i)]
                         + relational_spread(i) * instance_relational_weight
+
+        Per-channel stash: intermediate channel contributions are saved into
+        _channel_mission, _channel_anticipatory, _channel_relational, and
+        _channel_surprise for Phase 2 introspection (breakdown tooltip,
+        color-by-source). The final _attention is unchanged from before.
         """
-        # --- Class-level attention (Formulas 1 + 2) ---
-        combined = self._kb.compute_attention(
+        # --- Channel 1: mission spreading activation from current goal (F1) ---
+        mission_attn = self._kb.compute_attention(
             self._goal_id,
             alpha=self._alpha,
             max_distance=self.effective_max_distance,
             use_spreading_activation=self._fc.use_f1_spreading_activation,
         )
+        combined = dict(mission_attn)
+
+        # --- Channel 2: anticipatory contributions from queued goals (F2) ---
+        anticipatory_attn: dict[str, float] = {}
         if self._fc.use_f2_anticipatory_horizon:
             for future_goal, eta, level in self._mission_queue:
                 lam = _LAMBDA_BY_LEVEL.get(level, self._lambda_horizon)
@@ -583,9 +656,12 @@ class AwarenessManager:
                     use_spreading_activation=self._fc.use_f1_spreading_activation,
                 )
                 for cid, a in future_attn.items():
-                    combined[cid] = min(1.0, combined.get(cid, 0.0) + discount * a)
+                    contrib = discount * a
+                    anticipatory_attn[cid] = anticipatory_attn.get(cid, 0.0) + contrib
+                    combined[cid] = min(1.0, combined.get(cid, 0.0) + contrib)
 
-        # --- Instance-level attention ---
+        # --- Instance-level attention + relational channel stash ---
+        relational_attn: dict[str, float] = {}
         if self._instance_kb is not None:
             instance_attn = self._instance_kb.compute_instance_attention(
                 combined,
@@ -594,11 +670,18 @@ class AwarenessManager:
                 instance_relational_weight=self._instance_relational_weight,
                 use_spreading_activation=self._fc.use_f1_spreading_activation,
             )
+            # Relational channel = boost above the class-gate baseline.
+            # base = total class attention (F1 + F2) inherited by this instance.
+            for iid in self._instance_kb.instance_ids():
+                inst = self._instance_kb.get_instance(iid)
+                base = combined.get(inst.class_id, 0.0)
+                relational_attn[iid] = max(0.0, instance_attn[iid] - base)
             combined.update(instance_attn)
 
-        # --- One-tick violation boosts (Perceptual Prediction Error) ---
+        # --- Channel 3: surprise - violation boosts (Perceptual Prediction Error) ---
         # Applied after normal attention is computed; cleared on each tick so
         # the boost is visible for exactly one recompute cycle.
+        surprise_attn: dict[str, float] = dict(self._violation_boosts)
         for cid, boost in self._violation_boosts.items():
             combined[cid] = min(1.0, combined.get(cid, 0.0) + boost)
         self._violation_boosts.clear()
@@ -609,13 +692,19 @@ class AwarenessManager:
             combined[cid] = value
         self._attention_overrides.clear()
 
+        # Stash channels for Phase 2 introspection
+        self._channel_mission = mission_attn
+        self._channel_anticipatory = anticipatory_attn
+        self._channel_relational = relational_attn
+        self._channel_surprise = surprise_attn
+
         self._attention = combined
 
     def _top_n(self) -> list[str]:
         p = self.priorities()
         # Only schedule concepts with strictly positive priority.
         # Zero-priority items (task nodes, or E ≤ certainty_threshold) are never
-        # worth refreshing — task nodes have decay_rate=0 so E stays 0 and
+        # worth refreshing - task nodes have decay_rate=0 so E stays 0 and
         # querying them is wasteful; gated concepts are already sufficiently known.
         positive = {k: v for k, v in p.items() if v > 0.0}
         return sorted(positive, key=positive.__getitem__, reverse=True)[: self._budget]

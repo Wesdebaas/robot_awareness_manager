@@ -1,7 +1,7 @@
 # Awareness Manager
 
 Top-down robot awareness management for cognitive robotics.  
-Master's thesis — Wessel Remmelzwaan, TU Delft / CoreSense Horizon Europe.
+Master's thesis - Wessel Remmelzwaan, TU Delft / CoreSense Horizon Europe.
 
 ---
 
@@ -23,7 +23,7 @@ pip install matplotlib networkx numpy
 
 ## Setup
 
-### Option A — colcon (required for the ROS 2 node; also works for all demos)
+### Option A - colcon (required for the ROS 2 node; also works for all demos)
 
 ```bash
 cd ~/thesis_ws
@@ -34,7 +34,7 @@ source install/setup.bash
 
 After sourcing, all scripts below can be run directly with `python3`.
 
-### Option B — standalone Python (demos and evaluation only, no ROS 2 node)
+### Option B - standalone Python (demos and evaluation only, no ROS 2 node)
 
 No build step needed. Prefix every `python3` call with the package path:
 
@@ -52,12 +52,12 @@ export PYTHONPATH=$PWD/src/awareness_manager:$PYTHONPATH
 
 ---
 
-## Live Comparison Demo — F2: Anticipatory Horizon
+## Live Comparison Demo - F2: Anticipatory Horizon
 
 Shows the value of pre-tuning awareness for upcoming tasks.
 
 **What you will see:**  
-Both panels run the birdhouse scenario in lockstep at 2× real-time speed.
+Both panels run the birdhouse scenario in lockstep at 2x real-time speed.
 The robot starts with goal `build_birdhouse`. At **t = 25 simulated seconds**,
 a disconnected `store_tools` task auto-promotes. 
 
@@ -65,7 +65,7 @@ a disconnected `store_tools` task auto-promotes.
   on `store_tools` concepts as their ETA counted down (Anticipatory Horizon,
   Formula 2). At the switch their epistemic error is already low.
 - **Right (F2 OFF):** `store_tools` concepts had attention = 0 the entire
-  time — invisible until the switch fires. Their epistemic error has been
+  time - invisible until the switch fires. Their epistemic error has been
   drifting unchecked, causing a sharp spike in the bottom metric chart.
 
 **With colcon build + source (Option A):**
@@ -105,7 +105,7 @@ Generates comparison figures for all five grounding formulas and saves them
 to `evaluation/figures/`.
 
 ```bash
-# All five formulas in one 2×3 figure:
+# All five formulas in one 2x3 figure:
 python3 src/awareness_manager/evaluation/run_ablation.py --all
 
 # One formula at a time (also prints a terminal summary table):

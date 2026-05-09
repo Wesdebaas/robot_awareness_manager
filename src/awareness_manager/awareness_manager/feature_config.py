@@ -14,14 +14,14 @@ class FeatureConfig:
     """
     Controls which of the five grounding formulas are active.
 
-    All flags default to True — existing behaviour is fully preserved when
+    All flags default to True - existing behaviour is fully preserved when
     no FeatureConfig is passed to AwarenessManager.
 
-    F1 — Spreading Activation:       KnowledgeBase.compute_attention
-    F2 — Anticipatory Horizon:       _recompute_attention mission-queue blend
-    F3 — Utility Saturation:         AwarenessManager.observe
-    F4 — Quadratic Cost Constraint:  effective_max_distance property
-    F5 — Epistemic Error / Entropy:  KnowledgeBase.tick + priorities
+    F1 - Spreading Activation:       KnowledgeBase.compute_attention
+    F2 - Anticipatory Horizon:       _recompute_attention mission-queue blend
+    F3 - Utility Saturation:         AwarenessManager.observe
+    F4 - Quadratic Cost Constraint:  effective_max_distance property
+    F5 - Epistemic Error / Entropy:  KnowledgeBase.tick + priorities
     """
     use_f1_spreading_activation: bool = True
     use_f2_anticipatory_horizon: bool = True

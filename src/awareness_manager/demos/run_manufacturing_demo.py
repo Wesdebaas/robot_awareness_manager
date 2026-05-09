@@ -1,5 +1,5 @@
 """
-Demo: Cross-class instance attention — CoreSense D6.1 Manufacturing Testbed.
+Demo: Cross-class instance attention - CoreSense D6.1 Manufacturing Testbed.
 
 Run from the workspace root:
     python3 src/awareness_manager/demos/run_manufacturing_demo.py
@@ -15,10 +15,10 @@ delivered by a KUKA KMR mobile manipulator.  The class graph encodes the
 
 The following classes have NO semantic path to assemble_gear_unit:
 
-    mobile_robot       (KMR — intralogistics, not assembly)
-    human_operator     (Alice — loading/handover, not modelled as an assembly tool)
-    laser_scanner      (Pilz SSM — safety, not an assembly resource)
-    inspection_camera  (Zivid One+S — quality control, not assembly)
+    mobile_robot       (KMR - intralogistics, not assembly)
+    human_operator     (Alice - loading/handover, not modelled as an assembly tool)
+    laser_scanner      (Pilz SSM - safety, not an assembly resource)
+    inspection_camera  (Zivid One+S - quality control, not assembly)
 
 BUT at the instance level, these physical co-location edges exist:
 
@@ -28,7 +28,7 @@ BUT at the instance level, these physical co-location edges exist:
     zivid_camera_1 (inspection_camera) --mountedOn--> kmr_1           [2-hop]
 
 The demo prints a 'CROSS-CLASS SPOTLIGHT' table each tick showing which
-instances gain attention purely through relational proximity — their parent
+instances gain attention purely through relational proximity - their parent
 class has A=0 in the class graph, yet the instance has A>0.
 
 What to watch for
@@ -126,7 +126,7 @@ def _print_crossclass_spotlight(am: AwarenessManager) -> None:
         return
 
     print(f"\n  {_RED}{_BOLD}CROSS-CLASS SPOTLIGHT{_RESET}  "
-          f"{_DIM}— class A=0, but instance A>0 via relational proximity{_RESET}")
+          f"{_DIM}- class A=0, but instance A>0 via relational proximity{_RESET}")
     print(f"  {_RED}{'─'*70}{_RESET}")
     header = f"  {'INSTANCE':<22} {'CLASS':<22} {'cls A':>6}  {'inst A':>6}  BAR"
     print(f"  {_CYAN}{header.strip()}{_RESET}")
@@ -165,7 +165,7 @@ def main() -> None:
     )
 
     print("=" * 72)
-    print("  CoreSense D6.1 — Agile Manufacturing Testbed")
+    print("  CoreSense D6.1 - Agile Manufacturing Testbed")
     print("  Cross-class instance attention demo")
     print()
     print("  Class graph for 'assemble_gear_unit' covers:")
@@ -230,11 +230,11 @@ def main() -> None:
     print("  Demo complete.  Key observations:")
     print("  1. Cross-class instances (kmr_1, operator_alice, pilz_scanner_1) gain")
     print("     attention purely from physical co-location with the active assembly")
-    print("     station — their parent classes have A=0 in the class graph.")
+    print("     station - their parent classes have A=0 in the class graph.")
     print("  2. zivid_camera_1 gains a 2-hop boost: camera → KMR → assembly station.")
     print("  3. On goal switch, kmr_1 gains CLASS-level attention and its relational")
     print("     boost to zivid_camera_1 strengthens proportionally.")
-    print("  4. This demonstrates that instance links can cross class boundaries —")
+    print("  4. This demonstrates that instance links can cross class boundaries -")
     print("     physical reality can differ from the semantic ontology.")
     print(f"{'='*72}")
 

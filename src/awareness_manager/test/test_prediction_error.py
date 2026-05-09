@@ -148,9 +148,9 @@ def test_violation_boosts_class_neighbors():
     am.tick(dt=1.0)   # build up attention state
     attn_before = am.attention()['location']
 
-    # First observation on 'tool' — sets prediction
+    # First observation on 'tool' - sets prediction
     am.observe_with_feedback('tool', observed_value=0.1)
-    # Second observation — triggers violation
+    # Second observation - triggers violation
     am.observe_with_feedback('tool', observed_value=0.9, violation_threshold=0.3)
 
     # _violation_boosts should now be populated for 'tool' and its neighbor 'location'
@@ -195,7 +195,7 @@ def test_violation_boost_cleared_after_one_tick():
     am.tick(dt=0.0)  # applies boost, clears _violation_boosts
     attn_after_boost = am.attention().get('location', 0.0)
 
-    am.tick(dt=0.0)  # no new violation — should be back to normal
+    am.tick(dt=0.0)  # no new violation - should be back to normal
     attn_two_ticks  = am.attention().get('location', 0.0)
 
     # Two ticks after violation, attention should be <= the boosted value
@@ -252,7 +252,7 @@ def test_instance_violation_spike_clamped_to_one():
 def test_class_violation_no_relational_spike():
     """
     Violating a class-level concept (not an instance) should NOT spike any
-    instance neighbors — the relational channel only applies to instances.
+    instance neighbors - the relational channel only applies to instances.
     """
     ikb = _make_instance_kb()
     am = _make_simple_am(instance_kb=ikb)

@@ -11,18 +11,18 @@ def build_birdhouse_kb() -> KnowledgeBase:
     semantic graph for developing and evaluating the awareness manager.
 
     Decay rates (delta) reflect how quickly each concept's validity degrades:
-        0.0   /s  task node        — abstract goal, does not decay
-        0.001 /s  furniture        — workbench/tool_rack rarely moves
-        0.005 /s  large materials  — wood plank moved infrequently
-        0.01  /s  tools            — may be picked up or relocated
-        0.02  /s  small fasteners  — nails/screws frequently repositioned
-        0.1   /s  human hand       — position changes continuously
+        0.0   /s  task node        - abstract goal, does not decay
+        0.001 /s  furniture        - workbench/tool_rack rarely moves
+        0.005 /s  large materials  - wood plank moved infrequently
+        0.01  /s  tools            - may be picked up or relocated
+        0.02  /s  small fasteners  - nails/screws frequently repositioned
+        0.1   /s  human hand       - position changes continuously
 
     Edge weights represent initial semantic distance (lower = closer):
-        1.0  — direct task dependency or tight functional coupling
+        1.0  - direct task dependency or tight functional coupling
                (e.g. build_birdhouse→hammer, hammer↔nail)
-        1.5  — human agent to tool: indirect, depends on human action
-        2.0  — tool or material to its storage location: present there
+        1.5  - human agent to tool: indirect, depends on human action
+        2.0  - tool or material to its storage location: present there
                but not functionally bound
 
     Weight rationale: initial values are set by domain knowledge. The
@@ -99,10 +99,10 @@ def build_birdhouse_kb_extended() -> KnowledgeBase:
           the value of anticipatory lookahead.
 
     New concepts (not connected to existing graph):
-        store_tools      — task, decay_rate=0
-        storage_bin      — location, decay_rate=0.001  (rarely moved)
-        cleaning_cloth   — object,   decay_rate=0.05   (frequently repositioned)
-        tool_organizer   — object,   decay_rate=0.01   (occasionally moved)
+        store_tools      - task, decay_rate=0
+        storage_bin      - location, decay_rate=0.001  (rarely moved)
+        cleaning_cloth   - object,   decay_rate=0.05   (frequently repositioned)
+        tool_organizer   - object,   decay_rate=0.01   (occasionally moved)
     """
     kb = build_birdhouse_kb()
 
@@ -129,21 +129,21 @@ def build_birdhouse_instance_kb() -> InstanceKnowledgeBase:
     what a hammer is; instances 'hammer_rack' and 'hammer_bench' are the two
     specific hammers present in the workshop.
 
-    Decay rates mirror those of the parent class — instances of a class
+    Decay rates mirror those of the parent class - instances of a class
     degrade at roughly the same rate as the class itself.
 
     Instance relations use typed edges reflecting actual spatial / causal
     structure:
-        locatedAt  — instance is physically at a location instance
-        uses       — an agent instance actively uses a tool instance
-        locatedOn  — a material/tool rests on a surface instance
+        locatedAt  - instance is physically at a location instance
+        uses       - an agent instance actively uses a tool instance
+        locatedOn  - a material/tool rests on a surface instance
 
     Semantic coverage (8 instances):
-        hammer_rack, hammer_bench  — two hammers (class: hammer)
-        workbench_north, workbench_south — two workbenches (class: workbench)
-        alice_hand, bob_hand        — two workers' hands (class: human_hand)
-        nail_box_A                  — fastener supply (class: nail)
-        plank_1, plank_2            — two wood planks (class: wood_plank)
+        hammer_rack, hammer_bench  - two hammers (class: hammer)
+        workbench_north, workbench_south - two workbenches (class: workbench)
+        alice_hand, bob_hand        - two workers' hands (class: human_hand)
+        nail_box_A                  - fastener supply (class: nail)
+        plank_1, plank_2            - two wood planks (class: wood_plank)
     """
     ikb = InstanceKnowledgeBase()
 

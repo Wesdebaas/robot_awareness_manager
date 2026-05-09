@@ -7,11 +7,11 @@
     Custom service and action interface definitions for the awareness_manager package.
 
     Services:
-      QueryConcept  — on-demand lookup of any concept's E, A, P values
-      SetAttention  — one-tick attention override for debugging / external control
+      QueryConcept  - on-demand lookup of any concept's E, A, P values
+      SetAttention  - one-tick attention override for debugging / external control
 
     Actions:
-      QueueGoal     — queue a future goal with ETA and level; streams tick-by-tick
+      QueueGoal     - queue a future goal with ETA and level; streams tick-by-tick
                       feedback until the goal is promoted to active
   </description>
   <maintainer email="wesselremmelzwaan@gmail.com">Wessel</maintainer>

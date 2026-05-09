@@ -71,16 +71,16 @@ class AwarenessNode(Node):
     ROS2 node that runs the AwarenessManager and exposes its full interface.
 
     Two independent timers drive the node:
-        tick_timer  — advances simulation, publishes schedule + state,
+        tick_timer  - advances simulation, publishes schedule + state,
                       and sends feedback to all active QueueGoal action handles
-        obs_timer   — executes one scheduled observation per interval
+        obs_timer   - executes one scheduled observation per interval
 
     Services (synchronous, respond immediately):
-        query_concept  — returns current E / A / P for any concept
-        set_attention  — injects a one-tick attention override
+        query_concept  - returns current E / A / P for any concept
+        set_attention  - injects a one-tick attention override
 
     Action server (asynchronous, long-running):
-        queue_goal     — queues a future goal and streams tick-by-tick feedback
+        queue_goal     - queues a future goal and streams tick-by-tick feedback
                          until the goal is promoted (ETA → 0)
     """
 
@@ -174,7 +174,7 @@ class AwarenessNode(Node):
                           callback_group=self._cb_group)
 
         self.get_logger().info(
-            f"AwarenessNode started — scenario={scenario}  goal={goal_id}  "
+            f"AwarenessNode started - scenario={scenario}  goal={goal_id}  "
             f"budget={budget}  tick_rate={tick_rate}Hz  obs_interval={obs_interval}s"
         )
 
@@ -221,7 +221,7 @@ class AwarenessNode(Node):
                 continue
 
             if goal_id in promoted_ids:
-                # Goal promoted — send result and finish
+                # Goal promoted - send result and finish
                 result = QueueGoal.Result()
                 result.promoted = True
                 result.promoted_goal_id = goal_id
@@ -231,7 +231,7 @@ class AwarenessNode(Node):
                     f"[ACTION] QueueGoal '{goal_id}' promoted → result sent"
                 )
             elif goal_id in queue_after:
-                # Still pending — send feedback
+                # Still pending - send feedback
                 current_eta = queue_after[goal_id]
                 # attention_boost = how much the queued goal is currently contributing
                 # to the concept with the highest attention under the queued goal
@@ -318,7 +318,7 @@ class AwarenessNode(Node):
             )
             if violated:
                 self.get_logger().warn(
-                    f"[VIOLATION] '{concept_id}' violated — "
+                    f"[VIOLATION] '{concept_id}' violated - "
                     f"observed={observed_value:.3f}  "
                     f"predicted={self._am._kb.get_concept(concept_id).predicted_value:.3f}  "
                     f"error={self._am._kb.get_concept(concept_id).prediction_error:.3f}"
@@ -340,7 +340,7 @@ class AwarenessNode(Node):
         response: QueryConcept.Response,
     ) -> QueryConcept.Response:
         """
-        awareness/query_concept — synchronous on-demand concept lookup.
+        awareness/query_concept - synchronous on-demand concept lookup.
 
         Checks the class KB first, then the instance KB. Returns current
         epistemic error, attention, and priority for the requested concept.
@@ -388,7 +388,7 @@ class AwarenessNode(Node):
         response: SetAttention.Response,
     ) -> SetAttention.Response:
         """
-        awareness/set_attention — inject a one-tick attention override.
+        awareness/set_attention - inject a one-tick attention override.
 
         The override replaces the normally-computed attention for the given
         concept on the next tick, then is cleared. Useful for debugging and
@@ -452,7 +452,7 @@ class AwarenessNode(Node):
         """
         Queue the goal in the AwarenessManager and return when promoted.
 
-        Feedback is NOT published here — it is published each tick from
+        Feedback is NOT published here - it is published each tick from
         _tick_cb() to keep feedback cadence aligned with the simulation clock.
         The execute callback simply blocks until _tick_cb() marks the handle
         as succeeded (promotion) or the client cancels.
@@ -495,7 +495,7 @@ class AwarenessNode(Node):
                 return result
             await asyncio.sleep(self._tick_dt)
 
-        # _tick_cb already called handle.succeed() — just return the result
+        # _tick_cb already called handle.succeed() - just return the result
         result = QueueGoal.Result()
         result.promoted         = True
         result.promoted_goal_id = goal_id

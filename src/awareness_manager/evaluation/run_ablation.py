@@ -7,15 +7,15 @@ the measurable contribution of each grounding formula. Each formula is compared
 against a degraded baseline where that formula is disabled.
 
 Formula OFF baselines:
-    F1 OFF — Uniform attention (A=1 for all reachable concepts). Budget is
+    F1 OFF - Uniform attention (A=1 for all reachable concepts). Budget is
              spread equally across all concepts regardless of goal-relevance.
-    F2 OFF — No anticipatory lookahead. Queued future goals are ignored until
+    F2 OFF - No anticipatory lookahead. Queued future goals are ignored until
              they become active, leaving the robot flat-footed on transitions.
-    F3 OFF — Full over-refresh (refresh=1.0 always). Slow-decaying concepts
+    F3 OFF - Full over-refresh (refresh=1.0 always). Slow-decaying concepts
              waste their observation budget driving E near-zero unnecessarily.
-    F4 OFF — Fixed max_distance used even when memory_budget is set. No
+    F4 OFF - Fixed max_distance used even when memory_budget is set. No
              resource-driven depth bounding; window size is uncontrolled.
-    F5 OFF — Drift still active but priority = A only. Robot schedules by
+    F5 OFF - Drift still active but priority = A only. Robot schedules by
              goal-relevance alone, ignoring information staleness.
 
 Usage:
@@ -52,7 +52,7 @@ _OUT = Path(__file__).parent / 'figures'
 _OUT.mkdir(exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# Plot style — matches run_evaluation.py
+# Plot style - matches run_evaluation.py
 # ---------------------------------------------------------------------------
 
 plt.rcParams.update({
@@ -69,8 +69,8 @@ plt.rcParams.update({
     'savefig.bbox':      'tight',
 })
 
-_C_FULL    = '#2196F3'   # blue  — full system
-_C_ABLATED = '#FF5722'   # red-orange — formula disabled
+_C_FULL    = '#2196F3'   # blue  - full system
+_C_ABLATED = '#FF5722'   # red-orange - formula disabled
 
 # ---------------------------------------------------------------------------
 # Simulation parameters
@@ -86,7 +86,7 @@ _MAX_DIST      = 4.0
 _MEMORY_BUDGET = 9      # used when testing F4; depth = √9 - 1 = 2
 
 # Goal transition: future goal is queued at t=0 and promotes at t=_SWITCH_T.
-# For F2 the queued goal is 'store_tools' — a disconnected subgraph that has
+# For F2 the queued goal is 'store_tools' - a disconnected subgraph that has
 # zero spreading-activation attention from 'build_birdhouse'. This makes the
 # anticipatory pre-tuning effect visible (F2 ON pre-tunes; F2 OFF is blind).
 # All other configs also use the extended KB and store_tools queue so the
@@ -111,11 +111,11 @@ _NAMED_CONFIGS: dict[str, FeatureConfig] = {
 
 _LABELS: dict[str, str] = {
     'full':           'Full system',
-    'no_spreading':   'F1 OFF — Uniform attention',
-    'no_anticipatory':'F2 OFF — No lookahead',
-    'no_saturation':  'F3 OFF — Over-refresh',
-    'no_budget':      'F4 OFF — No budget constraint',
-    'no_drift':       'F5 OFF — Attention-only priority',
+    'no_spreading':   'F1 OFF - Uniform attention',
+    'no_anticipatory':'F2 OFF - No lookahead',
+    'no_saturation':  'F3 OFF - Over-refresh',
+    'no_budget':      'F4 OFF - No budget constraint',
+    'no_drift':       'F5 OFF - Attention-only priority',
     'baseline':       'All formulas OFF',
 }
 
@@ -153,13 +153,13 @@ def _run(fc: FeatureConfig, test_f4: bool = False) -> dict:
 
     Returns:
         dict with keys:
-            times          — array of simulated timestamps
-            weighted_error — Σ(E·A)/Σ(A) at each tick
-            mean_error     — unweighted mean E at each tick
-            window_size    — number of concepts with A > 0 at each tick
-            obs_count      — cumulative observations executed
-            cum_waste      — cumulative observation waste (F3 metric)
-            switch_t       — time of goal transition
+            times          - array of simulated timestamps
+            weighted_error - Σ(E·A)/Σ(A) at each tick
+            mean_error     - unweighted mean E at each tick
+            window_size    - number of concepts with A > 0 at each tick
+            obs_count      - cumulative observations executed
+            cum_waste      - cumulative observation waste (F3 metric)
+            switch_t       - time of goal transition
     """
     kb = build_birdhouse_kb_extended()
     non_task = [c for c in kb.concept_ids()
@@ -251,11 +251,11 @@ def _plot_comparison(name: str, fc: FeatureConfig) -> tuple[Path, dict, dict]:
     ax.axvline(_SWITCH_T, color='#666', lw=0.8, linestyle=':', label='goal switch')
     ax.set_xlabel('Simulated time  (s)')
     ax.set_ylabel('Attention-weighted epistemic error  Σ(E·A)/Σ(A)')
-    ax.set_title(f'{title} — weighted epistemic error')
+    ax.set_title(f'{title} - weighted epistemic error')
     ax.legend()
     ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
 
-    # Right: secondary metric — chosen per formula to best highlight its contribution
+    # Right: secondary metric - chosen per formula to best highlight its contribution
     ax2 = axes[1]
     if name == 'no_budget':
         ax2.plot(r_full['times'],    r_full['window_size'],
@@ -263,7 +263,7 @@ def _plot_comparison(name: str, fc: FeatureConfig) -> tuple[Path, dict, dict]:
         ax2.plot(r_ablated['times'], r_ablated['window_size'],
                  color=_C_ABLATED, lw=1.5, label=_LABELS[name], linestyle='--')
         ax2.set_ylabel('Attention window size  |{c : A(c) > 0}|')
-        ax2.set_title(f'{title} — window size (budget B = {_MEMORY_BUDGET})')
+        ax2.set_title(f'{title} - window size (budget B = {_MEMORY_BUDGET})')
         ax2.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
     elif name == 'no_saturation':
         # F3: show cumulative observation waste = Σ max(0, actual_refresh - calibrated)
@@ -273,7 +273,7 @@ def _plot_comparison(name: str, fc: FeatureConfig) -> tuple[Path, dict, dict]:
                  color=_C_ABLATED, lw=1.5, label=_LABELS[name], linestyle='--')
         ax2.axvline(_SWITCH_T, color='#666', lw=0.8, linestyle=':', label='goal switch')
         ax2.set_ylabel('Cumulative observation waste  Σ(refresh − calibrated)')
-        ax2.set_title(f'{title} — observation waste (F3 OFF over-refreshes slow concepts)')
+        ax2.set_title(f'{title} - observation waste (F3 OFF over-refreshes slow concepts)')
         ax2.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.1f'))
     else:
         ax2.plot(r_full['times'],    r_full['mean_error'],
@@ -282,7 +282,7 @@ def _plot_comparison(name: str, fc: FeatureConfig) -> tuple[Path, dict, dict]:
                  color=_C_ABLATED, lw=1.5, label=_LABELS[name], linestyle='--')
         ax2.axvline(_SWITCH_T, color='#666', lw=0.8, linestyle=':', label='goal switch')
         ax2.set_ylabel('Mean epistemic error  Ē')
-        ax2.set_title(f'{title} — mean epistemic error')
+        ax2.set_title(f'{title} - mean epistemic error')
         ax2.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
     ax2.set_xlabel('Simulated time  (s)')
     ax2.legend()
@@ -303,11 +303,11 @@ def _plot_comparison(name: str, fc: FeatureConfig) -> tuple[Path, dict, dict]:
 
 
 # ---------------------------------------------------------------------------
-# All-formulas comparison (2×3 grid)
+# All-formulas comparison (2x3 grid)
 # ---------------------------------------------------------------------------
 
 def _plot_all() -> Path:
-    """Run all six ablation configs and produce a 2×3 comparison grid."""
+    """Run all six ablation configs and produce a 2x3 comparison grid."""
     ablation_names = ['no_spreading', 'no_anticipatory', 'no_saturation',
                       'no_budget', 'no_drift']
 
@@ -404,7 +404,7 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='\n'.join([
             'Named configs:',
-            *[f'  {k:<20} — {v}' for k, v in _LABELS.items()],
+            *[f'  {k:<20} - {v}' for k, v in _LABELS.items()],
         ]),
     )
     group = p.add_mutually_exclusive_group(required=True)
@@ -418,7 +418,7 @@ def _parse_args() -> argparse.Namespace:
     )
     group.add_argument(
         '--all', action='store_true',
-        help='Run all five single-formula ablations in one 2×3 figure.',
+        help='Run all five single-formula ablations in one 2x3 figure.',
     )
     return p.parse_args()
 
@@ -452,7 +452,7 @@ def main() -> None:
         ax.axvline(_SWITCH_T, color='#666', lw=0.8, linestyle=':', label='goal switch')
         ax.set_xlabel('Simulated time (s)')
         ax.set_ylabel('Attention-weighted epistemic error Σ(E·A)/Σ(A)')
-        ax.set_title('Full system — weighted epistemic error')
+        ax.set_title('Full system - weighted epistemic error')
         ax.legend()
         fig.tight_layout()
         path = _OUT / 'ablation_full.png'

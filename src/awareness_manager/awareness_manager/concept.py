@@ -19,7 +19,7 @@ class Concept:
     It drives formula 5 (Epistemic Error): E_{t+1} = E_t + drift - refresh.
 
     Grounding:
-        Friston (2010): Free Energy Principle — agents act to minimise the
+        Friston (2010): Free Energy Principle - agents act to minimise the
         entropy of their internal world model. decay_rate quantifies how fast
         that entropy grows for this specific concept.
     """
@@ -41,7 +41,7 @@ class InstanceConcept(Concept):
     """
     A node in the instance-level knowledge graph.
 
-    Represents a specific physical individual in the world — a particular
+    Represents a specific physical individual in the world - a particular
     tool, person, location, or object that the robot may encounter. Instances
     belong to a class defined in the KnowledgeBase (class graph) and inherit
     relevance from it. They also gain relevance through relational links to

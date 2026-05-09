@@ -30,3 +30,6 @@ htmlcov/
 
 # Docs
 docs
+experiments
+traces
+reports

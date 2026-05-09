@@ -1,16 +1,16 @@
 """
-Evaluation: Robot Awareness Management — Grounding Formulas
+Evaluation: Robot Awareness Management - Grounding Formulas
 ===========================================================
 
 Produces seven thesis figures saved to evaluation/figures/:
 
-    fig1_attention_reshuffle.png  — Formula 1: attention reshuffles on goal switch
-    fig2_scheduling_comparison.png— Formula 3: AM-guided vs random vs no-refresh
-    fig3_anticipatory_horizon.png — Formula 2: pre-tuning as future goal ETA → 0
-    fig4_memory_budget.png        — Formula 4: attention window size vs budget B
-    fig5_class_instance_split.png — Class vs instance attention (D6.1 testbed)
-    fig8_certainty_threshold.png  — Phase 4: refresh count vs epistemic error trade-off
-    fig9_hierarchical_horizons.png— Phase 5: global / phase / task blending over time
+    fig1_attention_reshuffle.png  - Formula 1: attention reshuffles on goal switch
+    fig2_scheduling_comparison.png- Formula 3: AM-guided vs random vs no-refresh
+    fig3_anticipatory_horizon.png - Formula 2: pre-tuning as future goal ETA → 0
+    fig4_memory_budget.png        - Formula 4: attention window size vs budget B
+    fig5_class_instance_split.png - Class vs instance attention (D6.1 testbed)
+    fig8_certainty_threshold.png  - Phase 4: refresh count vs epistemic error trade-off
+    fig9_hierarchical_horizons.png- Phase 5: global / phase / task blending over time
 
 Run from the workspace root:
     python3 src/awareness_manager/evaluation/run_evaluation.py
@@ -83,7 +83,7 @@ _SEED          = 42
 
 
 # ===========================================================================
-# Figure 1 — Attention reshuffle on goal switch  (Formula 1)
+# Figure 1 - Attention reshuffle on goal switch  (Formula 1)
 # ===========================================================================
 
 def fig1_attention_reshuffle() -> None:
@@ -116,7 +116,7 @@ def fig1_attention_reshuffle() -> None:
     ax.set_xticklabels(concepts, rotation=30, ha='right', fontsize=9)
     ax.set_ylabel('Attention  A(c)')
     ax.set_ylim(0, 1.12)
-    ax.set_title('Fig 1 — Attention redistribution on goal switch  (Formula 1: Spreading Activation)')
+    ax.set_title('Fig 1 - Attention redistribution on goal switch  (Formula 1: Spreading Activation)')
     ax.legend()
     ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
 
@@ -146,15 +146,15 @@ def fig1_attention_reshuffle() -> None:
 
 
 # ===========================================================================
-# Figure 2 — Scheduling comparison  (Formula 3)
+# Figure 2 - Scheduling comparison  (Formula 3)
 # ===========================================================================
 
 def _run_scheduling_strategy(strategy: str, seed: int) -> dict:
     """
     Simulate _SIM_DURATION seconds with one of three scheduling strategies:
-        'am'      — priority = E x A, top-BUDGET concepts observed each cycle
-        'random'  — BUDGET randomly selected non-task concepts each cycle
-        'noop'    — no observations; purely passive epistemic drift
+        'am'      - priority = E x A, top-BUDGET concepts observed each cycle
+        'random'  - BUDGET randomly selected non-task concepts each cycle
+        'noop'    - no observations; purely passive epistemic drift
 
     Returns dict with keys: times, mean_error, weighted_error, final_errors
     """
@@ -230,7 +230,7 @@ def fig2_scheduling_comparison() -> None:
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
     fig.suptitle(
-        'Fig 2 — Scheduling strategies  (Formula 3: Utility Saturation)',
+        'Fig 2 - Scheduling strategies  (Formula 3: Utility Saturation)',
         fontsize=11,
     )
 
@@ -247,7 +247,7 @@ def fig2_scheduling_comparison() -> None:
 
     ax2.set_xlabel('Simulated time  (s)')
     ax2.set_ylabel('Attention-weighted epistemic error')
-    ax2.set_title('Σ(E·A) / Σ(A)  — penalises errors on attended concepts')
+    ax2.set_title('Σ(E·A) / Σ(A)  - penalises errors on attended concepts')
     ax2.set_ylim(bottom=0)
     ax2.legend()
 
@@ -257,7 +257,7 @@ def fig2_scheduling_comparison() -> None:
     plt.close(fig)
     print(f'[Fig 2]  saved → {path}')
 
-    # Console summary — final E values
+    # Console summary - final E values
     print('         Final epistemic errors at t={:.0f}s:'.format(_SIM_DURATION))
     print(f'         {"concept":<22}  {"AM":>8}  {"random":>8}  {"noop":>8}')
     all_concepts = list(results['am']['final_errors'])
@@ -267,7 +267,7 @@ def fig2_scheduling_comparison() -> None:
 
 
 # ===========================================================================
-# Figure 3 — Anticipatory horizon  (Formula 2)
+# Figure 3 - Anticipatory horizon  (Formula 2)
 # ===========================================================================
 
 def fig3_anticipatory_horizon() -> None:
@@ -327,7 +327,7 @@ def fig3_anticipatory_horizon() -> None:
 
     fig, ax = plt.subplots(figsize=(10, 4.5))
     ax.set_title(
-        f'Fig 3 — Anticipatory horizon  (Formula 2: e^{{-λΔt}},  λ={lambda_h})\n'
+        f'Fig 3 - Anticipatory horizon  (Formula 2: e^{{-λΔt}},  λ={lambda_h})\n'
         f'Emergency goal queued at t=0, ETA={eta_start}s  →  promotes at t≈{eta_start}s'
     )
 
@@ -375,14 +375,14 @@ def fig3_anticipatory_horizon() -> None:
 
 
 # ===========================================================================
-# Figure 4 — Memory budget vs attention window  (Formula 4)
+# Figure 4 - Memory budget vs attention window  (Formula 4)
 # ===========================================================================
 
 def fig4_memory_budget() -> None:
     """
     Two-panel plot:
-        Left  — effective_max_distance = sqrt(B) - 1 vs budget B
-        Right — number of concepts in attention window vs budget B
+        Left  - effective_max_distance = sqrt(B) - 1 vs budget B
+        Right - number of concepts in attention window vs budget B
 
     Confirms Formula 4: depth = √B - 1 and that the window grows predictably.
     """
@@ -406,7 +406,7 @@ def fig4_memory_budget() -> None:
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
     fig.suptitle(
-        'Fig 4 — Memory budget constraint  (Formula 4: depth = √B - 1)',
+        'Fig 4 - Memory budget constraint  (Formula 4: depth = √B - 1)',
         fontsize=11,
     )
 
@@ -448,7 +448,7 @@ def fig4_memory_budget() -> None:
 
 
 # ===========================================================================
-# Figure 5 — Class vs instance attention split  (D6.1 manufacturing testbed)
+# Figure 5 - Class vs instance attention split  (D6.1 manufacturing testbed)
 # ===========================================================================
 
 def fig5_class_instance_split() -> None:
@@ -456,8 +456,8 @@ def fig5_class_instance_split() -> None:
     Two-panel stacked bar chart using the CoreSense D6.1 manufacturing scenario.
 
     For each concept (classes left, instances right), bars are stacked to show:
-        • Class-gate contribution  — spreading activation from the goal class graph
-        • Relational boost         — additional attention from instance-graph proximity
+        • Class-gate contribution  - spreading activation from the goal class graph
+        • Relational boost         - additional attention from instance-graph proximity
 
     Cross-class instances (class-gate = 0, relational > 0) are highlighted in
     orange to make the cross-class effect visually explicit.
@@ -492,11 +492,11 @@ def fig5_class_instance_split() -> None:
         return class_attn, inst_full, inst_boost
 
     # ── Colour palette ─────────────────────────────────────────────────────
-    C_CLASS_ON   = '#2196F3'   # blue — attended class
-    C_CLASS_OFF  = '#CFD8DC'   # light grey — unattended class
-    C_INST_GATE  = '#4CAF50'   # green — instance class-gate contribution
-    C_INST_BOOST = '#FF9800'   # amber — relational boost on top of gate
-    C_CROSS_ONLY = '#F44336'   # red — cross-class (gate=0, boost>0)
+    C_CLASS_ON   = '#2196F3'   # blue - attended class
+    C_CLASS_OFF  = '#CFD8DC'   # light grey - unattended class
+    C_INST_GATE  = '#4CAF50'   # green - instance class-gate contribution
+    C_INST_BOOST = '#FF9800'   # amber - relational boost on top of gate
+    C_CROSS_ONLY = '#F44336'   # red - cross-class (gate=0, boost>0)
 
     goals = ['assemble_gear_unit', 'transport_parts']
     titles = [
@@ -506,7 +506,7 @@ def fig5_class_instance_split() -> None:
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
     fig.suptitle(
-        'Fig 5 — Class vs instance attention distribution  (CoreSense D6.1 Manufacturing Testbed)\n'
+        'Fig 5 - Class vs instance attention distribution  (CoreSense D6.1 Manufacturing Testbed)\n'
         'Stacked bars: ■ class-gate  ■ relational boost.  '
         'Cross-class instances (class gate = 0, boost > 0) shown in red.',
         fontsize=10,
@@ -549,7 +549,7 @@ def fig5_class_instance_split() -> None:
             is_cross_class = gate < 0.001 and total_a > 0.001
 
             if is_cross_class:
-                # Entirely relational — draw in red
+                # Entirely relational - draw in red
                 ax.bar(xi, total_a, width=bar_height,
                        color=C_CROSS_ONLY, alpha=0.88, zorder=3)
             else:
@@ -594,11 +594,11 @@ def fig5_class_instance_split() -> None:
     # ── Shared legend ─────────────────────────────────────────────────────
     from matplotlib.patches import Patch
     legend_items = [
-        Patch(facecolor=C_CLASS_ON,   alpha=0.88, label='Class — attended'),
-        Patch(facecolor=C_CLASS_OFF,  alpha=0.88, label='Class — not attended'),
-        Patch(facecolor=C_INST_GATE,  alpha=0.88, label='Instance — class-gate contribution'),
-        Patch(facecolor=C_INST_BOOST, alpha=0.88, label='Instance — relational boost (on top)'),
-        Patch(facecolor=C_CROSS_ONLY, alpha=0.88, label='Instance — cross-class (gate=0, boost>0)  ✕'),
+        Patch(facecolor=C_CLASS_ON,   alpha=0.88, label='Class - attended'),
+        Patch(facecolor=C_CLASS_OFF,  alpha=0.88, label='Class - not attended'),
+        Patch(facecolor=C_INST_GATE,  alpha=0.88, label='Instance - class-gate contribution'),
+        Patch(facecolor=C_INST_BOOST, alpha=0.88, label='Instance - relational boost (on top)'),
+        Patch(facecolor=C_CROSS_ONLY, alpha=0.88, label='Instance - cross-class (gate=0, boost>0)  ✕'),
     ]
     fig.legend(handles=legend_items, loc='lower center', ncol=5,
                fontsize=8, bbox_to_anchor=(0.5, -0.02))
@@ -622,7 +622,7 @@ def fig5_class_instance_split() -> None:
 
 
 # ===========================================================================
-# Figure 8 — Certainty threshold: refresh count vs epistemic error  (Phase 4)
+# Figure 8 - Certainty threshold: refresh count vs epistemic error  (Phase 4)
 # ===========================================================================
 
 def fig8_certainty_threshold() -> None:
@@ -630,7 +630,7 @@ def fig8_certainty_threshold() -> None:
     Two-panel figure illustrating the trade-off controlled by certainty_threshold.
 
     The Probabilistic Forgetting gate suppresses scheduling for concepts whose
-    epistemic error E ≤ threshold — i.e. concepts that are already known
+    epistemic error E ≤ threshold - i.e. concepts that are already known
     well enough. A tighter threshold allows more budget to be freed; a looser
     one behaves like the vanilla AM.
 
@@ -643,7 +643,7 @@ def fig8_certainty_threshold() -> None:
     Right panel: mean epistemic error of attended concepts over time.
 
     Thresholds compared:
-        τ = 0.00  (baseline — no gate)
+        τ = 0.00  (baseline - no gate)
         τ = 0.03
         τ = 0.07
         τ = 0.12
@@ -715,7 +715,7 @@ def fig8_certainty_threshold() -> None:
     ax_err.set_ylim(bottom=0)
 
     fig.suptitle(
-        'Probabilistic Forgetting — certainty threshold trade-off\n'
+        'Probabilistic Forgetting - certainty threshold trade-off\n'
         'Higher τ skips already-known concepts, freeing budget for uncertain ones',
         fontsize=10,
     )
@@ -744,7 +744,7 @@ def fig8_certainty_threshold() -> None:
 
 
 # ===========================================================================
-# Figure 9 — Hierarchical attention blending over time  (Phase 5)
+# Figure 9 - Hierarchical attention blending over time  (Phase 5)
 # ===========================================================================
 
 def fig9_hierarchical_horizons() -> None:
@@ -833,7 +833,7 @@ def fig9_hierarchical_horizons() -> None:
     ax_time.set_ylim(0, 1.05)
 
     fig.suptitle(
-        'Hierarchical Mission Horizons — global / phase / task level comparison\n'
+        'Hierarchical Mission Horizons - global / phase / task level comparison\n'
         f'Queued goal: emergency_landing at ETA={eta_start} s   '
         f'Concept tracked: {concept_of_interest}',
         fontsize=10,
@@ -861,7 +861,7 @@ def fig9_hierarchical_horizons() -> None:
 
 def main() -> None:
     print('=' * 60)
-    print('  Awareness Manager — Evaluation')
+    print('  Awareness Manager - Evaluation')
     print(f'  Output directory: {_OUT}')
     print('=' * 60)
 

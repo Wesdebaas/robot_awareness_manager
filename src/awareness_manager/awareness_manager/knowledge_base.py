@@ -17,8 +17,8 @@ class KnowledgeBase:
 
     Implements two of the five grounding formulas directly:
 
-        Formula 1 — Spreading Activation:    R_n = (1 - alpha)^d
-        Formula 5 — Epistemic Error/Entropy: E_{t+1} = E_t + drift - refresh
+        Formula 1 - Spreading Activation:    R_n = (1 - alpha)^d
+        Formula 5 - Epistemic Error/Entropy: E_{t+1} = E_t + drift - refresh
 
     Formulas 2-4 (Anticipatory Horizon, Utility Saturation, Quadratic Cost)
     operate at the Awareness Manager level, which sits on top of this KB.
@@ -65,7 +65,7 @@ class KnowledgeBase:
         self._graph.add_edge(id_a, id_b, weight=weight)
 
     # ------------------------------------------------------------------
-    # Formula 1 — Spreading Activation
+    # Formula 1 - Spreading Activation
     # ------------------------------------------------------------------
 
     def compute_attention(
@@ -76,7 +76,7 @@ class KnowledgeBase:
         use_spreading_activation: bool = True,
     ) -> dict[str, float]:
         """
-        Formula 1 — Spreading Activation: R_n = (1 - alpha)^d
+        Formula 1 - Spreading Activation: R_n = (1 - alpha)^d
 
         Computes attention values for all concepts reachable from the goal
         within max_distance weighted path length. Dijkstra finds the shortest
@@ -87,7 +87,7 @@ class KnowledgeBase:
         Concepts beyond max_distance are not returned (implicitly zero).
 
         When use_spreading_activation is False (F1 OFF baseline), all reachable
-        concepts receive uniform attention 1.0 — the reachability cutoff still
+        concepts receive uniform attention 1.0 - the reachability cutoff still
         applies, but distance decay is disabled. This wastes budget on semantically
         distant concepts, demonstrating the value of the formula.
 
@@ -112,12 +112,12 @@ class KnowledgeBase:
         return {cid: 1.0 for cid in distances}
 
     # ------------------------------------------------------------------
-    # Formula 5 — Epistemic Error / Entropy
+    # Formula 5 - Epistemic Error / Entropy
     # ------------------------------------------------------------------
 
     def refresh_concept(self, concept_id: str, refresh: float) -> None:
         """
-        Formula 5 — Epistemic Error: E_{t+1} = E_t + drift - refresh
+        Formula 5 - Epistemic Error: E_{t+1} = E_t + drift - refresh
 
         Apply an observation to reduce epistemic error for one concept.
         Drift (the concept's decay_rate) is always added, modelling the
@@ -140,7 +140,7 @@ class KnowledgeBase:
         decay_rate per second. This models the natural entropy increase
         described in formula 5 (drift term).
 
-        When apply_drift is False (F5 OFF baseline), epistemic error is frozen —
+        When apply_drift is False (F5 OFF baseline), epistemic error is frozen -
         no drift is applied. Scheduling then falls back to attention-only priority
         (see AwarenessManager.priorities), removing entropy-driven urgency.
         """
@@ -160,6 +160,13 @@ class KnowledgeBase:
 
     def concept_ids(self) -> list[str]:
         return list(self._concepts.keys())
+
+    def semantic_edges(self) -> list[tuple[str, str, float]]:
+        """Return all semantic edges as (id_a, id_b, weight) triples."""
+        return [
+            (u, v, self._graph[u][v]['weight'])
+            for u, v in self._graph.edges()
+        ]
 
     def __len__(self) -> int:
         return len(self._concepts)

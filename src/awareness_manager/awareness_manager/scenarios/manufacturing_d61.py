@@ -1,14 +1,14 @@
 """
-CoreSense D6.1 — Agile Manufacturing Testbed scenario.
+CoreSense D6.1 - Agile Manufacturing Testbed scenario.
 
 Based on the Manufacturing Testbed described in CORESENSE D6.1 (CS-025-v1.0),
 specifically the MT-1 agile production use case at IMR Mullingar:
 
-    Mobile robot (KUKA KMR iiwa)  — intralogistics, machine tending
-    Assembly robot (UR5)           — collaborative gear unit assembly
-    Inspection camera (Zivid One+S) — quality control
-    Pilz laser scanner             — Speed & Separation Monitoring (SSM)
-    Human operator                 — loading, inspection, handover
+    Mobile robot (KUKA KMR iiwa)  - intralogistics, machine tending
+    Assembly robot (UR5)           - collaborative gear unit assembly
+    Inspection camera (Zivid One+S) - quality control
+    Pilz laser scanner             - Speed & Separation Monitoring (SSM)
+    Human operator                 - loading, inspection, handover
 
 Process: Manufacturing → Inspection → Assembly
 Goal objects: plastic spur gears (SLA), metallic base plates, cantilever shafts,
@@ -51,11 +51,11 @@ def build_manufacturing_d61_kb() -> KnowledgeBase:
     Class-level KB for the D6.1 agile manufacturing testbed.
 
     Two task goals with intentionally disjoint semantic neighbourhoods:
-        assemble_gear_unit — attends to parts, assembly robot, station
-        transport_parts    — attends to mobile robot, machines, station
+        assemble_gear_unit - attends to parts, assembly robot, station
+        transport_parts    - attends to mobile robot, machines, station
 
     mobile_robot, human_operator, laser_scanner, inspection_camera have
-    NO semantic path to assemble_gear_unit — making them ideal candidates
+    NO semantic path to assemble_gear_unit - making them ideal candidates
     to demonstrate cross-class instance attention.
     """
     kb = KnowledgeBase()
@@ -70,7 +70,7 @@ def build_manufacturing_d61_kb() -> KnowledgeBase:
     kb.add_concept(Concept('fastener',         concept_type='object',   decay_rate=0.06))  # collars/washers/nuts
     kb.add_concept(Concept('assembly_robot',   concept_type='tool',     decay_rate=0.04))  # UR5
     kb.add_concept(Concept('gripper',          concept_type='tool',     decay_rate=0.05))  # Schunk EGP 50
-    kb.add_concept(Concept('assembly_station', concept_type='location', decay_rate=0.02))  # 900×1400×1000 mm cell
+    kb.add_concept(Concept('assembly_station', concept_type='location', decay_rate=0.02))  # 900x1400x1000 mm cell
 
     # ── Classes attended by transport_parts (NOT assemble_gear_unit) ───
     kb.add_concept(Concept('mobile_robot',     concept_type='tool',     decay_rate=0.03))  # KUKA KMR iiwa
@@ -94,7 +94,7 @@ def build_manufacturing_d61_kb() -> KnowledgeBase:
     kb.add_relation('shaft',              'assembly_station', weight=1.0)
 
     # ── Semantic edges for transport_parts ─────────────────────────────
-    # Deliberately NO connection to assembly_station — that node is only
+    # Deliberately NO connection to assembly_station - that node is only
     # in the assemble_gear_unit sub-graph so that mobile_robot is unreachable
     # from assemble_gear_unit via the class graph alone.  Physical co-location
     # at the assembly cell is expressed only in the instance graph.
@@ -112,7 +112,7 @@ def build_manufacturing_d61_instance_kb() -> InstanceKnowledgeBase:
 
     Three groups of instances:
 
-    GROUP A — Standard (class gate applies, normal attention inheritance):
+    GROUP A - Standard (class gate applies, normal attention inheritance):
         gear_small_1, gear_large_1  → gear_part
         shaft_1, shaft_2            → shaft
         fastener_set_1              → fastener
@@ -120,12 +120,12 @@ def build_manufacturing_d61_instance_kb() -> InstanceKnowledgeBase:
         egp50_gripper_1             → gripper
         station_cell_1              → assembly_station
 
-    GROUP B — Cross-class (1-hop relational boost from station_cell_1):
+    GROUP B - Cross-class (1-hop relational boost from station_cell_1):
         kmr_1           (mobile_robot)     parkedAt     → station_cell_1
         operator_alice  (human_operator)   workingAt    → station_cell_1
         pilz_scanner_1  (laser_scanner)    monitors     → station_cell_1
 
-    GROUP C — Cross-class (2-hop boost via kmr_1 → station_cell_1):
+    GROUP C - Cross-class (2-hop boost via kmr_1 → station_cell_1):
         zivid_camera_1  (inspection_camera) mountedOn   → kmr_1
 
     When goal=assemble_gear_unit:
@@ -151,15 +151,15 @@ def build_manufacturing_d61_instance_kb() -> InstanceKnowledgeBase:
     ikb.add_instance(InstanceConcept('station_cell_1', 'location', decay_rate=0.02, class_id='assembly_station'))
 
     # ── Group B: cross-class, 1-hop from station_cell_1 ─────────────────
-    # mobile_robot — NOT semantically linked to assemble_gear_unit
+    # mobile_robot - NOT semantically linked to assemble_gear_unit
     ikb.add_instance(InstanceConcept('kmr_1',          'tool',     decay_rate=0.03, class_id='mobile_robot'))
-    # human_operator — NOT semantically linked to assemble_gear_unit
+    # human_operator - NOT semantically linked to assemble_gear_unit
     ikb.add_instance(InstanceConcept('operator_alice', 'agent',    decay_rate=0.01, class_id='human_operator'))
-    # laser_scanner — NOT semantically linked to assemble_gear_unit
+    # laser_scanner - NOT semantically linked to assemble_gear_unit
     ikb.add_instance(InstanceConcept('pilz_scanner_1', 'safety',   decay_rate=0.01, class_id='laser_scanner'))
 
     # ── Group C: cross-class, 2-hop via kmr_1 → station_cell_1 ──────────
-    # inspection_camera — NOT semantically linked to assemble_gear_unit
+    # inspection_camera - NOT semantically linked to assemble_gear_unit
     ikb.add_instance(InstanceConcept('zivid_camera_1', 'tool',     decay_rate=0.05, class_id='inspection_camera'))
 
     # ── Intra-class relations (within semantically attended classes) ─────

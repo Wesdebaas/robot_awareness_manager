@@ -142,7 +142,7 @@ class TestTickIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Formula 3 — Utility Saturation
+# Formula 3 - Utility Saturation
 # ---------------------------------------------------------------------------
 
 class TestObserve:
@@ -187,7 +187,7 @@ class TestObserve:
 
 
 # ---------------------------------------------------------------------------
-# Formula 2 — Anticipatory Horizon
+# Formula 2 - Anticipatory Horizon
 # ---------------------------------------------------------------------------
 
 class TestAnticipatoryHorizon:
@@ -269,7 +269,7 @@ class TestAnticipatoryHorizon:
 
 
 # ---------------------------------------------------------------------------
-# Formula 4 — Quadratic Cost Constraint
+# Formula 4 - Quadratic Cost Constraint
 # ---------------------------------------------------------------------------
 
 class TestQuadraticCost:
@@ -306,7 +306,7 @@ class TestQuadraticCost:
 
 
 # ---------------------------------------------------------------------------
-# Probabilistic Forgetting — certainty_threshold (Phase 4)
+# Probabilistic Forgetting - certainty_threshold (Phase 4)
 # ---------------------------------------------------------------------------
 
 class TestCertaintyThreshold:
@@ -322,10 +322,10 @@ class TestCertaintyThreshold:
         assert 'near' in schedule or 'far' in schedule
 
     def test_concept_below_threshold_excluded_from_schedule(self):
-        # Set threshold=0.5 and keep E low on 'near' — it should be skipped.
+        # Set threshold=0.5 and keep E low on 'near' - it should be skipped.
         kb = _simple_kb()
         am = AwarenessManager(kb, goal_id='goal', budget=2, certainty_threshold=0.5)
-        # Do NOT tick — near.E and far.E start at 0.0, both below threshold
+        # Do NOT tick - near.E and far.E start at 0.0, both below threshold
         schedule = am.tick(dt=0.0)
         # No concept has E > 0.5, so nothing should be scheduled
         assert 'near' not in schedule
@@ -393,7 +393,7 @@ class TestCertaintyThreshold:
 
 
 # ---------------------------------------------------------------------------
-# Hierarchical Mission Horizons — queue_goal levels (Phase 5)
+# Hierarchical Mission Horizons - queue_goal levels (Phase 5)
 # ---------------------------------------------------------------------------
 
 class TestHierarchicalMissionHorizons:

@@ -99,7 +99,7 @@ def main() -> None:
     )
 
     print("=" * 70)
-    print("  Robot Awareness — Class/Instance Two-Layer Demo")
+    print("  Robot Awareness - Class/Instance Two-Layer Demo")
     print(f"  Budget: {BUDGET} concepts (class + instance combined)")
     print("  ◀ = in schedule this tick")
     print("=" * 70)

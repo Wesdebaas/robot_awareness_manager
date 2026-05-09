@@ -15,26 +15,26 @@ def build_pv_inspection_kb() -> KnowledgeBase:
     to battery, landing zone and airspace.
 
     Two task nodes allow this contrast to be demonstrated by switching goals:
-        inspect_pv_field    — normal inspection mission
-        emergency_landing   — triggered by low battery or critical fault
+        inspect_pv_field    - normal inspection mission
+        emergency_landing   - triggered by low battery or critical fault
 
     Decay rates (δ) reflect how fast each concept becomes stale:
-        0.0   /s  task nodes         — abstract goals, no decay
-        0.001 /s  solar_panel        — panels are static infrastructure
-        0.001 /s  panel_row          — fixed grid location, highly stable
-        0.005 /s  landing_zone       — usually clear, can be obstructed
-        0.01  /s  drone_camera       — vibration / calibration drift
-        0.02  /s  drone_gps          — signal can fluctuate in the field
-        0.02  /s  airspace           — other drones/birds move unpredictably
-        0.05  /s  drone_battery      — drains continuously during flight
-        0.08  /s  light_conditions   — clouds and sun angle change over minutes
-        0.1   /s  wind_speed         — gusts change on a seconds timescale
+        0.0   /s  task nodes         - abstract goals, no decay
+        0.001 /s  solar_panel        - panels are static infrastructure
+        0.001 /s  panel_row          - fixed grid location, highly stable
+        0.005 /s  landing_zone       - usually clear, can be obstructed
+        0.01  /s  drone_camera       - vibration / calibration drift
+        0.02  /s  drone_gps          - signal can fluctuate in the field
+        0.02  /s  airspace           - other drones/birds move unpredictably
+        0.05  /s  drone_battery      - drains continuously during flight
+        0.08  /s  light_conditions   - clouds and sun angle change over minutes
+        0.1   /s  wind_speed         - gusts change on a seconds timescale
 
     Edge weights (semantic distance, lower = tighter coupling):
-        1.0  — direct dependency (task ↔ primary concept, sensor ↔ signal)
-        1.5  — functional coupling (camera ↔ target panels, gps ↔ airspace)
-        2.0  — loose coupling (spatial proximity, system-level co-dependency)
-        2.5  — peripheral awareness (battery known but not primary concern)
+        1.0  - direct dependency (task ↔ primary concept, sensor ↔ signal)
+        1.5  - functional coupling (camera ↔ target panels, gps ↔ airspace)
+        2.0  - loose coupling (spatial proximity, system-level co-dependency)
+        2.5  - peripheral awareness (battery known but not primary concern)
     """
     kb = KnowledgeBase()
 
@@ -96,15 +96,15 @@ def build_pv_inspection_instance_kb() -> InstanceKnowledgeBase:
         - During emergency_landing: battery_main and landing zone instances become critical.
 
     Instance relations use typed edges:
-        partOf     — instance belongs to a larger structure
-        monitors   — sensor instance is targeted at an object instance
-        locatedAt  — instance is physically at a location
+        partOf     - instance belongs to a larger structure
+        monitors   - sensor instance is targeted at an object instance
+        locatedAt  - instance is physically at a location
 
     Semantic coverage (7 instances):
-        panel_A1, panel_A2, panel_B1  — three solar panels (class: solar_panel)
-        battery_main                   — primary drone battery (class: drone_battery)
-        lz_north, lz_south             — two landing zones (class: landing_zone)
-        camera_main                    — primary inspection camera (class: drone_camera)
+        panel_A1, panel_A2, panel_B1  - three solar panels (class: solar_panel)
+        battery_main                   - primary drone battery (class: drone_battery)
+        lz_north, lz_south             - two landing zones (class: landing_zone)
+        camera_main                    - primary inspection camera (class: drone_camera)
     """
     ikb = InstanceKnowledgeBase()
 
@@ -124,7 +124,7 @@ def build_pv_inspection_instance_kb() -> InstanceKnowledgeBase:
     ikb.add_instance(InstanceConcept('camera_main', 'object', decay_rate=0.01, class_id='drone_camera'))
 
     # --- Instance relations ---
-    # Panels are in a row (relational proximity — useful for relational propagation later)
+    # Panels are in a row (relational proximity - useful for relational propagation later)
     ikb.add_instance_relation('panel_A1', 'panel_A2', weight=1.0, relation_type='partOf')
     ikb.add_instance_relation('panel_A2', 'panel_B1', weight=2.0, relation_type='partOf')
     # Camera is monitoring the current inspection panel

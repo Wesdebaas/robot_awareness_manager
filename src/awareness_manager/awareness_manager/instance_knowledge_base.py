@@ -12,7 +12,7 @@ class InstanceKnowledgeBase:
     Stores specific physical individuals (instances) as nodes in a weighted
     undirected graph. Instances are connected by typed relational edges
     (e.g. locatedAt, heldBy, assignedTo) that reflect the actual causal and
-    spatial structure of the environment — not taxonomic similarity.
+    spatial structure of the environment - not taxonomic similarity.
 
     This graph sits alongside the class-level KnowledgeBase. Attention for
     instances is computed in two channels:
@@ -72,7 +72,7 @@ class InstanceKnowledgeBase:
 
         Weight represents relational distance (lower = tighter coupling).
         relation_type is stored as edge metadata but does not affect spreading
-        activation weights — it is available for future relational propagation
+        activation weights - it is available for future relational propagation
         in the Perceptual Prediction Error mechanism.
 
         Args:
@@ -105,17 +105,17 @@ class InstanceKnowledgeBase:
         """
         Compute attention values for all instances.
 
-        Channel 1 — Class gate:
+        Channel 1 - Class gate:
             base(i) = class_attention.get(class_id_of(i), 0.0)
             An instance only inherits attention if its class is in the active
             attention window. Instances of irrelevant classes get 0 base attention.
 
-        Channel 2 — Relational boost:
+        Channel 2 - Relational boost:
             Seeds = all instances whose class_attention > 0.
             For each seed s, run spreading activation through the instance graph:
                 contribution to i = class_attention[class_of(s)] * (1-alpha)^dist(s, i)
             Take the maximum contribution across all seeds for each instance i.
-            Only contributions from OTHER seeds (d > 0) are counted — the base
+            Only contributions from OTHER seeds (d > 0) are counted - the base
             attention already handles the self-seeding (d=0) case.
             The final relational boost is scaled by instance_relational_weight.
 
@@ -145,14 +145,14 @@ class InstanceKnowledgeBase:
 
         for seed_id, seed_a in seed_attention.items():
             if seed_id not in self._graph or self._graph.degree(seed_id) == 0:
-                # Isolated instance — no outgoing relations, no relational spread
+                # Isolated instance - no outgoing relations, no relational spread
                 continue
             distances = nx.single_source_dijkstra_path_length(
                 self._graph, seed_id, cutoff=max_distance, weight='weight'
             )
             for iid, d in distances.items():
                 if d == 0.0:
-                    continue  # skip self — handled by base attention
+                    continue  # skip self - handled by base attention
                 contrib = seed_a * ((1.0 - alpha) ** d if use_spreading_activation else 1.0)
                 relational_boost[iid] = max(relational_boost.get(iid, 0.0), contrib)
 
@@ -178,7 +178,7 @@ class InstanceKnowledgeBase:
         return self._graph[id_a][id_b].get('relation_type')
 
     # ------------------------------------------------------------------
-    # Formula 5 — Epistemic Error / Entropy
+    # Formula 5 - Epistemic Error / Entropy
     # ------------------------------------------------------------------
 
     def refresh_instance(self, instance_id: str, refresh: float) -> None:
@@ -222,6 +222,13 @@ class InstanceKnowledgeBase:
         """Return all instance IDs whose class_id matches the given class."""
         return [iid for iid, inst in self._instances.items()
                 if inst.class_id == class_id]
+
+    def relational_edges(self) -> list[tuple[str, str, float, str | None]]:
+        """Return all relational edges as (id_a, id_b, weight, relation_type) tuples."""
+        return [
+            (u, v, self._graph[u][v]['weight'], self._graph[u][v].get('relation_type'))
+            for u, v in self._graph.edges()
+        ]
 
     def __len__(self) -> int:
         return len(self._instances)
