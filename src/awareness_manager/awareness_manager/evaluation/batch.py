@@ -108,6 +108,20 @@ def _build_strategy(
 
     if strategy_name == "awareness_manager":
         from awareness_manager.awareness_manager import AwarenessManager
+        from awareness_manager.feature_config import FeatureConfig
+
+        fc_dict = params.get("feature_config")
+        if fc_dict is not None:
+            feature_config = FeatureConfig(
+                use_f1_spreading_activation=fc_dict.get("f1", True),
+                use_f2_anticipatory_horizon=fc_dict.get("f2", True),
+                use_f3_utility_saturation=fc_dict.get("f3", True),
+                use_f4_memory_budget=fc_dict.get("f4", True),
+                use_f5_epistemic_drift=fc_dict.get("f5", True),
+            )
+        else:
+            feature_config = None
+
         return AwarenessManager(
             kb,
             goal_id=goal_id,
@@ -117,6 +131,7 @@ def _build_strategy(
             instance_kb=ikb,
             instance_relational_weight=params.get("instance_relational_weight", 0.3),
             alpha=alpha,
+            feature_config=feature_config,
         ), True  # observe_top=True
 
     if strategy_name == "reactive":
@@ -301,11 +316,119 @@ def run_experiment(
     return manifest_path
 
 
+def run_ablation_experiment(
+    scenario: str = "pv_inspection",
+    budget: int = 2,
+    obs_interval: float = 10.0,
+    output_dir: str | Path = "experiments/ablation_study/",
+    duration_s: float = 70.0,
+    dt: float = 0.1,
+    resume: bool = True,
+) -> Path:
+    """
+    Run the 5-step component ablation study (subtractive design).
+
+    Uses F5 (epistemic priority) as the common foundation and asks whether
+    F1 (spreading activation) and F2 (anticipatory horizon) each add value:
+
+        Step 0  reactive    - 1-hop cutoff, round-robin; external baseline
+        Step 1  am_f5       - Epistemic priority alone; no semantic structure
+        Step 2  am_f1_f5    - + Spreading activation (F1); no anticipatory
+        Step 3  am_f2_f5    - + Anticipatory horizon (F2); no spreading
+        Step 4  am_full     - All formulas; full Awareness Manager
+
+    Key comparisons:
+        step1 vs step2: does F1 add value given F5?
+        step1 vs step3: does F2 add value given F5?
+        step2 vs step4: does F2 add value given F1+F5?
+        step3 vs step4: does F1 add value given F2+F5?
+
+    F3 (utility saturation) is always active — shared with both baselines.
+    F4 is only active in the full AM (step 4).
+
+    Fixed params: budget=B, observation_interval=T.  Use T=10.0 to avoid the
+    degenerate T=1.0 regime where refresh is too small to overcome drift.
+
+    Returns:
+        Path to the written manifest.json.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    base: dict = {"budget": budget, "observation_interval": obs_interval}
+
+    # (step_slug, strategy_name, params_dict)
+    # feature_config stored as plain dict for JSON serializability.
+    # Subtractive design: start from full AM, remove one component at a time.
+    # This answers "does component X add value given the others are present?"
+    # F3 is always on (shared with baselines).  F4 only active in full AM.
+    steps: list[tuple[str, str, dict]] = [
+        ("step0_reactive",  "reactive",          base.copy()),
+        ("step1_am_f5",     "awareness_manager", {**base, "feature_config": {"f1": False, "f2": False, "f3": True, "f4": False, "f5": True}}),
+        ("step2_am_f1_f5",  "awareness_manager", {**base, "feature_config": {"f1": True,  "f2": False, "f3": True, "f4": False, "f5": True}}),
+        ("step3_am_f2_f5",  "awareness_manager", {**base, "feature_config": {"f1": False, "f2": True,  "f3": True, "f4": False, "f5": True}}),
+        ("step4_am_full",   "awareness_manager", {**base, "feature_config": {"f1": True,  "f2": True,  "f3": True, "f4": True,  "f5": True}}),
+    ]
+
+    runs: list[dict] = []
+    total = len(steps)
+    for done, (slug, strategy_name, params) in enumerate(steps, 1):
+        run_dir = output_dir / slug
+
+        if resume and (run_dir / "meta.json").exists():
+            print(f"[{done}/{total}] SKIP (exists) {slug}")
+            runs.append({
+                "strategy":  strategy_name,
+                "params":    params,
+                "trace_dir": str(run_dir),
+                "completed": True,
+                "skipped":   True,
+            })
+            continue
+
+        print(f"[{done}/{total}] {slug}", end="  ", flush=True)
+        try:
+            record = _run_single(
+                scenario, strategy_name, params, run_dir,
+                duration_s=duration_s, dt=dt,
+            )
+            print(f"✓  ({record['wall_seconds']:.1f}s wall)")
+        except Exception as exc:
+            print(f"✗  {exc}")
+            record = {
+                "strategy":  strategy_name,
+                "params":    params,
+                "trace_dir": str(run_dir),
+                "completed": False,
+                "error":     str(exc),
+            }
+        runs.append(record)
+
+    manifest = {
+        "scenario":        scenario,
+        "experiment_dir":  str(output_dir),
+        "experiment_type": "ablation",
+        "budget":          budget,
+        "obs_interval":    obs_interval,
+        "duration_s":      duration_s,
+        "dt":              dt,
+        "total_runs":      total,
+        "completed_runs":  sum(1 for r in runs if r.get("completed")),
+        "runs":            runs,
+    }
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(f"\nManifest → {manifest_path}  ({manifest['completed_runs']}/{total} runs)")
+    return manifest_path
+
+
 def _param_slug(params: dict) -> str:
     """
     Short filesystem-safe identifier for a param dict.
 
     Example: {"budget": 2, "observation_interval": 5.0} → "b2_oi5.0"
+    Feature config example: {"budget": 2, ..., "feature_config": {"f1": True, "f2": False, ...}}
+        → "b2_oi10_fc-f1f3"
     """
     parts = []
     if "budget" in params:
@@ -315,10 +438,14 @@ def _param_slug(params: dict) -> str:
         parts.append(f"oi{oi:g}")
     if "alpha" in params:
         parts.append(f"a{params['alpha']}")
+    if "feature_config" in params:
+        fc = params["feature_config"]
+        enabled = "".join(k for k in ["f1", "f2", "f3", "f4", "f5"] if fc.get(k, True))
+        parts.append("fc-full" if enabled == "f1f2f3f4f5" else f"fc-{enabled or 'none'}")
     # Fall back to sorted key=value pairs for any remaining keys
     extras = {
         k: v for k, v in params.items()
-        if k not in ("budget", "observation_interval", "alpha", "sample_rate")
+        if k not in ("budget", "observation_interval", "alpha", "sample_rate", "feature_config")
     }
     for k, v in sorted(extras.items()):
         parts.append(f"{k}{v}")

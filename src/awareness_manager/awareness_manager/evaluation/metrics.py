@@ -5,20 +5,35 @@ Each function takes a loaded trace (dict with 'meta' and 'ticks' keys, as
 returned by load_trace()) and returns a scalar or timeseries.  All metrics
 read from the trace file only - no scenario re-running required.
 
-Neighborhood convention (used in M1, M2, M4, M5, M6)
-------------------------------------------------------
-The "goal neighborhood" of a goal node g is the set of class concepts
-reachable in exactly 1 hop in the structure's semantic_edges graph,
-filtered to decay_rate > 0 (task nodes are excluded - their E is always 0
-by design and would trivially lower mean-E figures).
+Metric set (primary → secondary)
+---------------------------------
+M1  e_at_transition     – max E across new-goal's 1-hop hood at the transition tick.
+                          Primary readiness metric: did the strategy prepare before the switch?
+M2  pre_transition_attn – mean attention to incoming-goal hood in the window before switch.
+                          Tests F2 (Anticipatory Horizon) directly: did the AM predict the need?
+M3  lag_seconds         – seconds until E_max < 0.1 after the transition.
+                          Recovery speed; complements M1 (low M1 → low M3 almost by definition).
+M4  e_relevant          – run-mean epistemic error over goal-relevant concepts.
+                          Ongoing knowledge quality; useful for regime comparisons.
+M5  budget_util         – schedule slots used / budget per tick.
+                          Sanity check; confirms budget is the binding constraint.
 
-This definition is strategy-agnostic: it does not depend on the strategy's
-attention values (which would make AM look good by design), and it matches
-ReactiveBaseline's active set exactly, making it the fairest common ruler.
+Additional functions available but not included in all_metrics() output:
+    mean_epistemic_error_irrelevant() – E over concepts outside the mission neighbourhood.
+    anticipatory_cache_hit_rate()     – binary pre-cache hit rate (redundant with M2).
+    refresh_count_by_relevance()      – relevant vs irrelevant schedule slots.
 
-The neighbourhood covers *class* concepts only.  Instance concepts inherit
-their class's neighbourhood membership for M1/M2/M6, and are excluded from
-M4/M5 (cognitive lag and cache-hit rate are class-level concepts).
+Neighborhood convention
+-----------------------
+The "goal neighborhood" of goal g is the set of class concepts reachable in
+exactly 1 hop in the semantic_edges graph, filtered to decay_rate > 0 (task
+nodes are excluded — their E is always 0 by design).
+
+Strategy-agnostic: does not depend on the strategy's attention values.
+Matches ReactiveBaseline's active set exactly — the fairest common ruler.
+
+Class concepts only.  Instance concepts inherit their class's membership for
+mean-E metrics; excluded from transition metrics (class-level only).
 
 Trace format (schema v2)
 ------------------------
@@ -528,12 +543,112 @@ def refresh_count_by_relevance(
 
 
 # ---------------------------------------------------------------------------
+# M7 - Pre-transition attention (AM signal quality)
+# ---------------------------------------------------------------------------
+
+def pre_transition_attention(
+    trace: dict,
+    *,
+    lookback_seconds: float | None = None,
+    lookback_ticks: int = 50,
+) -> dict:
+    """
+    Mean attention assigned to the incoming goal's 1-hop neighborhood
+    in the window immediately before each goal transition.
+
+    Measures the AM's *recommendation quality* independently of budget
+    sufficiency or decay rates: did the strategy signal that the upcoming
+    goal's concepts were important before the switch fired?
+
+    This is the direct test of F2 (Anticipatory Horizon): the AM should
+    pre-allocate attention to the incoming goal's neighborhood as its ETA
+    decreases, even before the goal becomes active.  ReactiveBaseline assigns
+    zero attention to concepts outside the current goal's 1-hop set, so its
+    score here is a structural baseline determined by overlap between the
+    two goal neighborhoods.
+
+    Window: the `lookback_seconds` (= observation_interval) immediately
+    before each transition tick (exclusive: [t_trans − window, t_trans)).
+
+    Concepts: class-level 1-hop neighbors of the incoming goal with
+    decay_rate > 0 (same neighborhood definition as M4/M5).
+
+    Aggregation:
+        For each transition: mean attention over all (tick, concept) pairs
+        in the window.  Transitions with no ticks in the window or an empty
+        neighborhood are excluded.
+        Final scalar: mean over per-transition values.
+
+    Returns:
+        {
+            "scalar":      float | None  - mean over all transitions; None if
+                                          no scoreable transitions
+            "transitions": [
+                {
+                    "t_transition":   float,
+                    "to_goal":        str,
+                    "neighborhood":   list[str],
+                    "mean_attention": float | None,
+                }
+            ],
+            "lookback_ticks": int  - actual window size used
+        }
+
+    Caveats:
+        AlwaysOnBaseline will score 1.0 trivially (attention is always 1.0).
+        The meaningful contrast is AM vs Reactive.
+        A Reactive score > 0 indicates overlap between the two goal hoods.
+    """
+    meta, ticks = trace["meta"], trace["ticks"]
+    dt = meta.get("dt", 0.1)
+    if lookback_seconds is not None:
+        window_ticks = max(1, int(round(lookback_seconds / dt)))
+    else:
+        window_ticks = lookback_ticks
+
+    results = []
+    for i, rec in enumerate(ticks):
+        for ev in rec.get("events", []):
+            if ev["type"] != "goal_transition":
+                continue
+            new_goal = ev["to"]
+            hood = _goal_neighborhood(meta, new_goal)
+            if not hood:
+                continue
+
+            lo = max(0, i - window_ticks)
+            attention_vals: list[float] = []
+            for j in range(lo, i):
+                concepts = ticks[j].get("concepts", {})
+                for cid in hood:
+                    if cid in concepts:
+                        attention_vals.append(concepts[cid].get("a", 0.0))
+
+            mean_att = statistics.mean(attention_vals) if attention_vals else None
+            results.append({
+                "t_transition":   rec["t"],
+                "to_goal":        new_goal,
+                "neighborhood":   sorted(hood),
+                "mean_attention": round(mean_att, 4) if mean_att is not None else None,
+            })
+
+    valid = [r["mean_attention"] for r in results if r["mean_attention"] is not None]
+    scalar = statistics.mean(valid) if valid else None
+
+    return {
+        "scalar":       round(scalar, 4) if scalar is not None else None,
+        "transitions":  results,
+        "lookback_ticks": window_ticks,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Convenience: compute all metrics for one trace
 # ---------------------------------------------------------------------------
 
 def all_metrics(trace: dict, *, params: dict | None = None) -> dict:
     """
-    Compute all six metrics for a single trace and return them in a flat dict.
+    Compute all metrics for a single trace and return them in a flat dict.
 
     Scalar values are pulled to the top level for easy CSV export.  Full
     timeseries and transition details are kept nested.
@@ -541,56 +656,53 @@ def all_metrics(trace: dict, *, params: dict | None = None) -> dict:
     Args:
         trace:  Loaded trace dict (from load_trace()).
         params: Optional run-level param dict (e.g. from manifest.json).
-                Used to derive observation_interval for M5's recency window.
+                Used to derive observation_interval for the M2 pre-attention window.
                 Falls back to meta["strategy_params"]["observation_interval"]
                 for AM traces; uses a 50-tick fallback for others.
 
     Returns:
         {
-            "m1_e_relevant":       float,
-            "m2_e_irrelevant":     float,
-            "m3_budget_util":      float,
-            "m4_lag_seconds":      float | None,   - None if no recovery
-            "m4_e_at_transition":  float | None,   - None if no transitions
-            "m5_cache_hit_rate":   float,
-            "m6_relevant_fraction": float,
-            "m6_ratio":            float,
-            # full results nested:
-            "m1": {...}, "m2": {...}, "m3": {...},
-            "m4": {...}, "m5": {...}, "m6": {...},
+            # Primary metrics (transition quality):
+            "m1_e_at_transition":     float | None,  – max E in new-goal hood at switch tick
+            "m2_pre_transition_attn": float | None,  – mean attention to incoming hood before switch
+            "m3_lag_seconds":         float | None,  – seconds until E_max < 0.1 after switch
+
+            # Secondary metrics (run-level quality):
+            "m4_e_relevant":          float,  – run-mean E over goal-relevant concepts
+            "m5_budget_util":         float,  – mean schedule utilisation (slots / budget)
+
+            # Full nested results:
+            "m_cognitive_lag":  {...},   – full cognitive_lag() result
+            "m_pre_attn":       {...},   – full pre_transition_attention() result
+            "m_e_relevant":     {...},   – full mean_epistemic_error_relevant() result
+            "m_budget_util":    {...},   – full budget_utilisation() result
         }
     """
     meta = trace["meta"]
-    # Derive observation_interval for M5's recency window (oi/2 seconds).
-    # Priority: explicit params arg → AM strategy_params → fallback (None → 50 ticks).
     oi = (
         (params or {}).get("observation_interval")
         or meta.get("strategy_params", {}).get("observation_interval")
     )
-    m5_lookback_s = oi / 2 if oi else None
+    m2_lookback_s = oi if oi else None
 
-    m1 = mean_epistemic_error_relevant(trace)
-    m2 = mean_epistemic_error_irrelevant(trace)
-    m3 = budget_utilisation(trace)
-    m4 = cognitive_lag(trace)
-    m5 = anticipatory_cache_hit_rate(trace, lookback_seconds=m5_lookback_s)
-    m6 = refresh_count_by_relevance(trace)
+    m_e_rel = mean_epistemic_error_relevant(trace)
+    m_budget = budget_utilisation(trace)
+    m_lag = cognitive_lag(trace)
+    m_pre = pre_transition_attention(trace, lookback_seconds=m2_lookback_s)
 
-    m4_lag = m4["mean_lag_seconds"]
-    m4_e_at = (
-        statistics.mean(tr["e_max_at_transition"] for tr in m4["transitions"])
-        if m4["transitions"] else None
+    m1_e_at = (
+        statistics.mean(tr["e_max_at_transition"] for tr in m_lag["transitions"])
+        if m_lag["transitions"] else None
     )
 
     return {
-        "m1_e_relevant":        round(m1["scalar"], 6),
-        "m2_e_irrelevant":      round(m2["scalar"], 6),
-        "m3_budget_util":       round(m3["scalar"], 6),
-        "m4_lag_seconds":       round(m4_lag, 3) if m4_lag is not None else None,
-        "m4_e_at_transition":   round(m4_e_at, 4) if m4_e_at is not None else None,
-        "m5_cache_hit_rate":    round(m5["hit_rate"], 4) if not math.isnan(m5["hit_rate"]) else None,
-        "m6_relevant_fraction": m6["relevant_fraction"],
-        "m6_ratio":             m6["ratio"],
-        "m1": m1, "m2": m2, "m3": m3,
-        "m4": m4, "m5": m5, "m6": m6,
+        "m1_e_at_transition":     round(m1_e_at, 4) if m1_e_at is not None else None,
+        "m2_pre_transition_attn": m_pre["scalar"],
+        "m3_lag_seconds":         round(m_lag["mean_lag_seconds"], 3) if m_lag["mean_lag_seconds"] is not None else None,
+        "m4_e_relevant":          round(m_e_rel["scalar"], 6),
+        "m5_budget_util":         round(m_budget["scalar"], 6),
+        "m_cognitive_lag": m_lag,
+        "m_pre_attn":      m_pre,
+        "m_e_relevant":    m_e_rel,
+        "m_budget_util":   m_budget,
     }

@@ -3,6 +3,7 @@ CLI entry point for the evaluation package.
 
     python -m awareness_manager.evaluation batch --help
     python -m awareness_manager.evaluation report --help
+    python -m awareness_manager.evaluation ablation --help
 
 Examples
 --------
@@ -20,6 +21,17 @@ Generate the report:
     python -m awareness_manager.evaluation report \\
         --experiment experiments/budget_obsint_sweep/ \\
         --output reports/budget_obsint_sweep/
+
+Run the subtractive component ablation (Reactive, AM[F5], AM[F1+F5], AM[F2+F5], AM[full]):
+
+    python -m awareness_manager.evaluation ablation \\
+        --output experiments/ablation_study/
+
+Generate the ablation report:
+
+    python -m awareness_manager.evaluation report \\
+        --experiment experiments/ablation_study/ \\
+        --output reports/ablation_study/
 
 Alpha sweep (secondary experiment):
 
@@ -80,6 +92,27 @@ def _cmd_report(args: argparse.Namespace) -> None:
     generate_report(Path(args.experiment), Path(args.output))
 
 
+def _cmd_ablation(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.batch import run_ablation_experiment
+
+    print(f"Scenario:      {args.scenario}")
+    print(f"Budget:        {args.budget}")
+    print(f"Obs interval:  {args.obs_interval} s")
+    print(f"Duration:      {args.duration} s")
+    print(f"Output:        {args.output}")
+    print()
+
+    run_ablation_experiment(
+        scenario=args.scenario,
+        budget=args.budget,
+        obs_interval=args.obs_interval,
+        output_dir=Path(args.output),
+        duration_s=args.duration,
+        dt=args.dt,
+        resume=not args.no_resume,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m awareness_manager.evaluation",
@@ -117,6 +150,24 @@ def main() -> None:
     p_report.add_argument("--output", required=True,
                           help="Output directory for report files")
     p_report.set_defaults(func=_cmd_report)
+
+    # ── ablation ──────────────────────────────────────────────────────────
+    p_abl = sub.add_parser("ablation", help="Run the 5-step component ablation study")
+    p_abl.add_argument("--scenario", default="pv_inspection",
+                       help="Scenario name (default: pv_inspection)")
+    p_abl.add_argument("--budget", type=int, default=2,
+                       help="Refresh budget per tick (default: 2)")
+    p_abl.add_argument("--obs-interval", type=float, default=10.0,
+                       help="Observation interval T in seconds (default: 10.0)")
+    p_abl.add_argument("--output", default="experiments/ablation_study/",
+                       help="Output directory (default: experiments/ablation_study/)")
+    p_abl.add_argument("--duration", type=float, default=70.0,
+                       help="Simulated duration per run in seconds (default: 70)")
+    p_abl.add_argument("--dt", type=float, default=0.1,
+                       help="Simulation timestep in seconds (default: 0.1)")
+    p_abl.add_argument("--no-resume", action="store_true",
+                       help="Re-run completed runs instead of skipping them")
+    p_abl.set_defaults(func=_cmd_ablation)
 
     args = parser.parse_args()
     args.func(args)

@@ -46,6 +46,11 @@ from dash import Input, Output, Patch, State, dcc, html
 from awareness_manager.visualization.runner import SimulationRunner
 from awareness_manager.visualization.snapshot import CHANNEL_COLORS
 
+
+def _strip_positions(elements: list) -> list:
+    """Return elements with 'position' keys removed (preserves Cytoscape user drags)."""
+    return [{k: v for k, v in e.items() if k != "position"} for e in elements]
+
 # ── Colour palette (dark theme) ──────────────────────────────────────────────
 _BG     = "#1e1e2e"
 _PANEL  = "#2a2a3e"
@@ -743,13 +748,11 @@ def _metrics_panel(source_a: 'ReplayReader', source_b: 'ReplayReader') -> html.D
                                             "text-align": "right"}),
                 ])),
                 html.Tbody([
-                    _row("M1 E_relevant ↓",    "m1_e_relevant",       4, True),
-                    _row("M2 E_irrelevant",     "m2_e_irrelevant",     4, True),
-                    _row("M3 budget util",      "m3_budget_util",      3, False),
-                    _row("M4 lag (s) ↓",        "m4_lag_seconds",      2, True,  "s"),
-                    _row("M4 E_at_transition ↓","m4_e_at_transition",  3, True),
-                    _row("M5 cache hit ↑",      "m5_cache_hit_rate",   2, False),
-                    _row("M6 rel fraction ↑",   "m6_relevant_fraction",2, False),
+                    _row("M1 E@transition ↓",   "m1_e_at_transition",     3, True),
+                    _row("M2 pre-attn ↑",        "m2_pre_transition_attn", 3, False),
+                    _row("M3 lag (s) ↓",         "m3_lag_seconds",         2, True, "s"),
+                    _row("M4 E_relevant ↓",      "m4_e_relevant",          4, True),
+                    _row("M5 budget util",        "m5_budget_util",         3, False),
                 ]),
             ],
             style={"border-collapse": "collapse"},
@@ -1046,6 +1049,8 @@ def _build_compare_app(
             dcc.Store(id="replay-store",
                       data={"tick_index": 0, "playing": False, "speed": 1.0}),
             dcc.Interval(id="update-interval", interval=250, n_intervals=0),
+            dcc.Store(id="layout-initialized-a", data=False),
+            dcc.Store(id="layout-initialized-b", data=False),
         ],
     )
 
@@ -1114,34 +1119,41 @@ def _build_compare_app(
         Output("elapsed-label-cmp", "children"),
         Output("replay-pos-label", "children"),
         Output("btn-play-pause", "children"),
+        Output("layout-initialized-a", "data"),
         Input("replay-store", "data"),
         Input("threshold-slider", "value"),
+        State("layout-initialized-a", "data"),
     )
-    def _cmp_graph_a(store, threshold):
+    def _cmp_graph_a(store, threshold, layout_done):
         store = store or {"tick_index": 0}
         tick_a = store.get("tick_index", 0)
         playing = store.get("playing", False)
         snap = source_a.snapshot_at(tick_a, threshold=threshold or 0.0)
+        elements = snap["elements"] if not layout_done else _strip_positions(snap["elements"])
         t = snap["elapsed"]
         total_t = source_a.total_duration()
         return (
-            snap["elements"],
+            elements,
             f"t = {t:.1f}s",
             f"tick {tick_a} / {max_tick_a}  ({t:.1f}s / {total_t:.1f}s)",
             "⏸" if playing else "▶",
+            True,
         )
 
     # ── Graph B ───────────────────────────────────────────────────────────
     @app.callback(
         Output("awareness-graph-b", "elements"),
+        Output("layout-initialized-b", "data"),
         Input("replay-store", "data"),
         Input("threshold-slider", "value"),
+        State("layout-initialized-b", "data"),
     )
-    def _cmp_graph_b(store, threshold):
+    def _cmp_graph_b(store, threshold, layout_done):
         store = store or {"tick_index": 0}
         tick_b = _aligned_tick_b(store.get("tick_index", 0))
         snap = source_b.snapshot_at(tick_b, threshold=threshold or 0.0)
-        return snap["elements"]
+        elements = snap["elements"] if not layout_done else _strip_positions(snap["elements"])
+        return elements, True
 
     # ── Inspector A ───────────────────────────────────────────────────────
     @app.callback(
@@ -1157,8 +1169,13 @@ def _build_compare_app(
         if node_data is None:
             return _hover_card(None), _empty_sparkline()
         node_id = node_data.get("id", "")
+        snap = source_a.snapshot_at(tick_a, threshold=0.0)
+        current_data = next(
+            (e["data"] for e in snap["elements"] if e.get("data", {}).get("id") == node_id),
+            node_data,
+        )
         hist = source_a.history_at(node_id, tick_a) if node_id else []
-        return _hover_card(node_data), _make_sparkline(hist, node_id, cursor_t)
+        return _hover_card(current_data), _make_sparkline(hist, node_id, cursor_t)
 
     # ── Inspector B ───────────────────────────────────────────────────────
     @app.callback(
@@ -1174,8 +1191,13 @@ def _build_compare_app(
         if node_data is None:
             return _hover_card(None), _empty_sparkline()
         node_id = node_data.get("id", "")
+        snap = source_b.snapshot_at(tick_b, threshold=0.0)
+        current_data = next(
+            (e["data"] for e in snap["elements"] if e.get("data", {}).get("id") == node_id),
+            node_data,
+        )
         hist = source_b.history_at(node_id, tick_b) if node_id else []
-        return _hover_card(node_data), _make_sparkline(hist, node_id, cursor_t)
+        return _hover_card(current_data), _make_sparkline(hist, node_id, cursor_t)
 
     # ── Events strip cursor ───────────────────────────────────────────────
     @app.callback(
@@ -1478,6 +1500,7 @@ def build_app(source: 'SimulationRunner | ReplayReader',
                 dcc.Store(id="replay-store",
                           data={"tick_index": 0, "playing": False, "speed": 1.0}),
                 dcc.Interval(id="update-interval", interval=250, n_intervals=0),
+                dcc.Store(id="layout-initialized", data=False),
             ],
         )
 
@@ -1498,6 +1521,7 @@ def build_app(source: 'SimulationRunner | ReplayReader',
                     ],
                 ),
                 dcc.Interval(id="update-interval", interval=250, n_intervals=0),
+                dcc.Store(id="layout-initialized", data=False),
             ],
         )
 
@@ -1582,23 +1606,27 @@ def build_app(source: 'SimulationRunner | ReplayReader',
             Output("elapsed-label", "children"),
             Output("replay-pos-label", "children"),
             Output("btn-play-pause", "children"),
+            Output("layout-initialized", "data"),
             Input("replay-store", "data"),
             Input("threshold-slider", "value"),
+            State("layout-initialized", "data"),
         )
-        def update_graph_replay(store, threshold):
+        def update_graph_replay(store, threshold, layout_done):
             store = store or {"tick_index": 0}
             tick_index = store.get("tick_index", 0)
             playing = store.get("playing", False)
             snap = reader.snapshot_at(tick_index, threshold=threshold or 0.0)
+            elements = snap["elements"] if not layout_done else _strip_positions(snap["elements"])
             cur_t = snap["elapsed"]
             total_t = reader.total_duration()
             return (
-                snap["elements"],
+                elements,
                 snap["goal_id"],
                 f"replay: {snap['queue_text']}",
                 f"t = {cur_t:.1f}s",
                 f"tick {tick_index} / {max_tick}  ({cur_t:.1f}s / {total_t:.1f}s)",
                 "⏸" if playing else "▶",
+                True,
             )
 
         # ── Inspector (replay) ────────────────────────────────────────────
@@ -1617,8 +1645,13 @@ def build_app(source: 'SimulationRunner | ReplayReader',
                 return _hover_card(None), _empty_sparkline()
 
             node_id = node_data.get("id", "")
+            snap = reader.snapshot_at(tick_index, threshold=0.0)
+            current_data = next(
+                (e["data"] for e in snap["elements"] if e.get("data", {}).get("id") == node_id),
+                node_data,
+            )
             hist = reader.history_at(node_id, tick_index) if node_id else []
-            return _hover_card(node_data), _make_sparkline(hist, node_id, cursor_t)
+            return _hover_card(current_data), _make_sparkline(hist, node_id, cursor_t)
 
         # ── Events strip cursor update (Patch for efficiency) ─────────────
         @app.callback(
@@ -1651,11 +1684,14 @@ def build_app(source: 'SimulationRunner | ReplayReader',
             Output("budget-label", "children"),
             Output("budget-bar-slot", "children"),
             Output("elapsed-label", "children"),
+            Output("layout-initialized", "data"),
             Input("update-interval", "n_intervals"),
             Input("threshold-slider", "value"),
+            State("layout-initialized", "data"),
         )
-        def update_graph(n_intervals, threshold):
+        def update_graph(n_intervals, threshold, layout_done):
             snap = runner.snapshot(threshold=threshold or 0.0)
+            elements = snap["elements"] if not layout_done else _strip_positions(snap["elements"])
             n, b = snap["n_scheduled"], snap["budget"]
             unlimited = snap.get("budget_unlimited", False)
             if unlimited:
@@ -1665,12 +1701,13 @@ def build_app(source: 'SimulationRunner | ReplayReader',
                 sched_label = f"Scheduled: {n} / {b}"
                 bar = _budget_bar_html(n, b)
             return (
-                snap["elements"],
+                elements,
                 snap["goal_id"],
                 f"queue: {snap['queue_text']}",
                 sched_label,
                 bar,
                 f"t = {snap['elapsed']:.1f}s",
+                True,
             )
 
         # ── Inspector (live) ──────────────────────────────────────────────
@@ -1678,13 +1715,19 @@ def build_app(source: 'SimulationRunner | ReplayReader',
             Output("hover-tooltip", "children"),
             Output("sparkline-chart", "figure"),
             Input("awareness-graph", "mouseoverNodeData"),
+            Input("update-interval", "n_intervals"),
         )
-        def update_inspector(node_data):
+        def update_inspector(node_data, _n):
             if node_data is None:
                 return _hover_card(None), _empty_sparkline()
             node_id = node_data.get("id", "")
+            snap = runner.snapshot(threshold=0.0)
+            current_data = next(
+                (e["data"] for e in snap["elements"] if e.get("data", {}).get("id") == node_id),
+                node_data,
+            )
             hist = runner.history(node_id) if node_id else []
-            return _hover_card(node_data), _make_sparkline(hist, node_id)
+            return _hover_card(current_data), _make_sparkline(hist, node_id)
 
         # ── Save trace button ─────────────────────────────────────────────
         @app.callback(

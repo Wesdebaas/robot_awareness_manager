@@ -27,7 +27,7 @@ from awareness_manager.baselines.strategy import AttentionStrategy
 # Canvas coordinate space for preset layout positions
 _CANVAS_W = 1000.0
 _CANVAS_H = 750.0
-_SCALE = 340.0
+_SCALE = 420.0
 _ORBIT_RADIUS_BASE = 68.0
 _ORBIT_RADIUS_STEP = 18.0  # extra radius per instance beyond 2
 

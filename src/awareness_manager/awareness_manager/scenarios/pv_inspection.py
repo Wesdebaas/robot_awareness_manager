@@ -7,81 +7,83 @@ def build_pv_inspection_kb() -> KnowledgeBase:
     """
     Inspection testbed scenario: autonomous drone inspecting a PV solar plant.
 
-    Based on the CoreSense Inspection Testbed (D7.1). A drone swarm inspects
-    photovoltaic power plants, collecting optical and thermal images of panels.
-    The key awareness challenge is goal-dependent reprioritisation: during normal
-    inspection the robot attends to panels, camera quality and light; when a
-    battery emergency is declared the robot must immediately shift full attention
-    to battery, landing zone and airspace.
+    Based on CoreSense D7.1.  Two operational goals with deliberately disjoint
+    1-hop neighborhoods, enabling the Anticipatory Horizon (F2) to demonstrate
+    measurable pre-tuning value:
 
-    Two task nodes allow this contrast to be demonstrated by switching goals:
-        inspect_pv_field    - normal inspection mission
-        emergency_landing   - triggered by low battery or critical fault
+        inspect_pv_field  → {solar_panel, drone_camera, image_quality, light_conditions}
+        emergency_landing → {drone_battery, landing_zone, wind_speed, airspace}
 
-    Decay rates (δ) reflect how fast each concept becomes stale:
-        0.0   /s  task nodes         - abstract goals, no decay
-        0.001 /s  solar_panel        - panels are static infrastructure
-        0.001 /s  panel_row          - fixed grid location, highly stable
-        0.005 /s  landing_zone       - usually clear, can be obstructed
-        0.01  /s  drone_camera       - vibration / calibration drift
-        0.02  /s  drone_gps          - signal can fluctuate in the field
-        0.02  /s  airspace           - other drones/birds move unpredictably
-        0.05  /s  drone_battery      - drains continuously during flight
-        0.08  /s  light_conditions   - clouds and sun angle change over minutes
-        0.1   /s  wind_speed         - gusts change on a seconds timescale
+    Zero neighborhood overlap ensures that F2's pre-allocation to the emergency
+    cluster is unambiguously measurable: a Reactive baseline assigns zero attention
+    to emergency concepts until the goal fires, while the AM pre-allocates budget
+    as the ETA of emergency_landing decreases.
 
-    Edge weights (semantic distance, lower = tighter coupling):
-        1.0  - direct dependency (task ↔ primary concept, sensor ↔ signal)
-        1.5  - functional coupling (camera ↔ target panels, gps ↔ airspace)
-        2.0  - loose coupling (spatial proximity, system-level co-dependency)
-        2.5  - peripheral awareness (battery known but not primary concern)
+    Decay rates (δ, s⁻¹):
+        0.0   task nodes            – abstract goals, no decay
+        0.001 solar_panel           – static infrastructure
+        0.001 panel_row             – fixed grid location
+        0.005 landing_zone          – usually clear, can be obstructed
+        0.01  drone_camera          – calibration drift, vibration
+        0.02  airspace              – other drones/birds move unpredictably
+        0.05  drone_battery         – drains continuously during flight
+        0.08  light_conditions      – clouds and sun angle change over minutes
+        0.08  image_quality         – focus, vibration, shadow/blur artifacts (D7.1 UC4)
+        0.1   wind_speed            – gusts change on a seconds timescale
+
+    Grounding in D7.1:
+        solar_panel, drone_camera, light_conditions – Inspection mode captures optical
+          and thermal images; light directly affects image quality.
+        image_quality – UC4 (Valid images): online analysis checks shadows, reflections,
+          blur.  Justifies a fast-decaying state concept in the inspection cluster.
+        drone_battery – Table 7.1 disturbance: battery discharge triggers emergency.
+        landing_zone  – Emergency mode: robot identifies a clear landing site.
+        wind_speed    – Emergency mode: must be below threshold for safe landing.
+        airspace      – UC2: airspace invasion (bird, other drone) triggers emergency.
     """
     kb = KnowledgeBase()
 
-    # --- Task nodes (goal = 0 decay, always stay fresh) ---
+    # --- Task nodes (decay=0, always fresh) ---
     kb.add_concept(Concept('inspect_pv_field',  'task',     decay_rate=0.0))
     kb.add_concept(Concept('emergency_landing', 'task',     decay_rate=0.0))
 
-    # --- Physical plant ---
+    # --- Inspection cluster ---
     kb.add_concept(Concept('solar_panel',       'object',   decay_rate=0.001))
-    kb.add_concept(Concept('panel_row',         'location', decay_rate=0.001))
-    kb.add_concept(Concept('landing_zone',      'location', decay_rate=0.02))
-
-    # --- Drone subsystems ---
     kb.add_concept(Concept('drone_camera',      'object',   decay_rate=0.01))
-    kb.add_concept(Concept('drone_battery',     'state',    decay_rate=0.05))
-    kb.add_concept(Concept('drone_gps',         'state',    decay_rate=0.02))
-
-    # --- Environment ---
-    kb.add_concept(Concept('wind_speed',        'state',    decay_rate=0.1))
+    kb.add_concept(Concept('image_quality',     'state',    decay_rate=0.08))
     kb.add_concept(Concept('light_conditions',  'state',    decay_rate=0.08))
+
+    # --- Emergency cluster ---
+    kb.add_concept(Concept('drone_battery',     'state',    decay_rate=0.05))
+    kb.add_concept(Concept('landing_zone',      'location', decay_rate=0.005))
+    kb.add_concept(Concept('wind_speed',        'state',    decay_rate=0.1))
     kb.add_concept(Concept('airspace',          'state',    decay_rate=0.02))
 
-    # --- Inspection goal: attends to panels, camera, light, wind ---
+    # --- Structural bridge node (not in either 1-hop hood) ---
+    kb.add_concept(Concept('panel_row',         'location', decay_rate=0.001))
+
+    # --- Inspection goal: 1-hop = {solar_panel, drone_camera, image_quality, light_conditions} ---
     kb.add_relation('inspect_pv_field', 'solar_panel',      weight=1.0)
     kb.add_relation('inspect_pv_field', 'drone_camera',     weight=1.0)
+    kb.add_relation('inspect_pv_field', 'image_quality',    weight=1.0)
     kb.add_relation('inspect_pv_field', 'light_conditions', weight=1.0)
-    kb.add_relation('inspect_pv_field', 'wind_speed',       weight=1.5)
-    kb.add_relation('inspect_pv_field', 'drone_gps',        weight=2.0)
-    kb.add_relation('inspect_pv_field', 'drone_battery',    weight=2.5)
 
-    # --- Emergency landing goal: attends to battery, landing zone, airspace, wind ---
+    # --- Emergency goal: 1-hop = {drone_battery, landing_zone, wind_speed, airspace} ---
     kb.add_relation('emergency_landing', 'drone_battery',   weight=1.0)
     kb.add_relation('emergency_landing', 'landing_zone',    weight=1.0)
     kb.add_relation('emergency_landing', 'wind_speed',      weight=1.0)
     kb.add_relation('emergency_landing', 'airspace',        weight=1.0)
 
-    # --- Physical plant structure ---
-    kb.add_relation('solar_panel',  'panel_row',            weight=1.0)
-    kb.add_relation('panel_row',    'landing_zone',         weight=2.0)
+    # --- Inspection cluster internal edges ---
+    kb.add_relation('solar_panel',    'panel_row',          weight=1.0)   # panels in rows
+    kb.add_relation('drone_camera',   'solar_panel',        weight=1.5)   # camera targets panels
+    kb.add_relation('drone_camera',   'image_quality',      weight=1.0)   # camera → quality signal
+    kb.add_relation('image_quality',  'light_conditions',   weight=1.5)   # light → image quality
 
-    # --- Sensor ↔ target / environment ---
-    kb.add_relation('drone_camera', 'solar_panel',          weight=1.5)
-    kb.add_relation('drone_camera', 'light_conditions',     weight=1.0)
-
-    # --- Drone subsystem cross-links ---
-    kb.add_relation('drone_battery', 'drone_gps',           weight=2.0)
-    kb.add_relation('drone_gps',     'airspace',            weight=1.5)
+    # --- Cross-cluster structural bridges (2-hop, not in either goal's 1-hop hood) ---
+    kb.add_relation('panel_row',      'landing_zone',       weight=2.0)   # spatial co-location
+    kb.add_relation('drone_camera',   'drone_battery',      weight=2.5)   # camera power draw
+    kb.add_relation('light_conditions', 'wind_speed',       weight=2.0)   # atmospheric coupling
 
     return kb
 
@@ -92,19 +94,19 @@ def build_pv_inspection_instance_kb() -> InstanceKnowledgeBase:
 
     Adds specific physical individuals for the drone inspection domain.
     Demonstrates goal-dependent instance relevance:
-        - During inspect_pv_field: panel instances are relevant, battery/landing less so.
-        - During emergency_landing: battery_main and landing zone instances become critical.
+        - During inspect_pv_field:   panel instances and camera_main are critical.
+        - During emergency_landing:  battery_main and landing zone instances become critical.
 
     Instance relations use typed edges:
-        partOf     - instance belongs to a larger structure
-        monitors   - sensor instance is targeted at an object instance
-        locatedAt  - instance is physically at a location
+        partOf     – instance belongs to a larger structure
+        monitors   – sensor instance is targeted at an object instance
+        locatedAt  – instance is physically at a location
 
-    Semantic coverage (7 instances):
-        panel_A1, panel_A2, panel_B1  - three solar panels (class: solar_panel)
-        battery_main                   - primary drone battery (class: drone_battery)
-        lz_north, lz_south             - two landing zones (class: landing_zone)
-        camera_main                    - primary inspection camera (class: drone_camera)
+    Instances (7):
+        panel_A1, panel_A2, panel_B1  – solar panels (class: solar_panel)
+        battery_main                   – primary drone battery (class: drone_battery)
+        lz_north, lz_south             – two landing zones (class: landing_zone)
+        camera_main                    – primary inspection camera (class: drone_camera)
     """
     ikb = InstanceKnowledgeBase()
 
@@ -124,14 +126,9 @@ def build_pv_inspection_instance_kb() -> InstanceKnowledgeBase:
     ikb.add_instance(InstanceConcept('camera_main', 'object', decay_rate=0.01, class_id='drone_camera'))
 
     # --- Instance relations ---
-    # Panels are in a row (relational proximity - useful for relational propagation later)
     ikb.add_instance_relation('panel_A1', 'panel_A2', weight=1.0, relation_type='partOf')
     ikb.add_instance_relation('panel_A2', 'panel_B1', weight=2.0, relation_type='partOf')
-    # Camera is monitoring the current inspection panel
     ikb.add_instance_relation('camera_main', 'panel_A1', weight=1.0, relation_type='monitors')
-    # Battery powers the camera (relevant when battery is the goal)
-    ikb.add_instance_relation('battery_main', 'camera_main', weight=2.0, relation_type='powers')
-    # Landing zones are close to each other (relational)
     ikb.add_instance_relation('lz_north', 'lz_south', weight=1.5, relation_type='locatedAt')
 
     return ikb
