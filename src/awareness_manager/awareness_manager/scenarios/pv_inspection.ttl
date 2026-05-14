@@ -1,0 +1,236 @@
+@prefix am: <http://coresense.eu/awareness/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# ============================================================
+# PV Inspection Scenario Ontology
+# CoreSense D7.1 — autonomous drone inspecting a PV solar plant
+#
+# Two operational goals with disjoint 1-hop neighbourhoods so
+# that Anticipatory Horizon (F2) pre-tuning is measurable.
+#
+# Decay rates (δ, s⁻¹):
+#   0.0   task nodes            — abstract goals, no drift
+#   0.001 solar_panel, panel_row — static infrastructure / fixed grid
+#   0.005 landing_zone          — usually clear, can be obstructed
+#   0.01  drone_camera          — calibration drift, vibration
+#   0.02  airspace              — other drones/birds move unpredictably
+#   0.05  drone_battery         — drains continuously during flight
+#   0.08  light_conditions      — clouds and sun angle change over minutes
+#   0.08  image_quality         — focus, vibration, shadow/blur (D7.1 UC4)
+#   0.1   wind_speed            — gusts change on a seconds timescale
+# ============================================================
+
+
+# --- Class-level concepts ---
+
+am:inspect_pv_field a am:Concept ;
+    am:conceptId "inspect_pv_field" ;
+    am:conceptType "task" ;
+    am:decayRate "0.0"^^xsd:double .
+
+am:emergency_landing a am:Concept ;
+    am:conceptId "emergency_landing" ;
+    am:conceptType "task" ;
+    am:decayRate "0.0"^^xsd:double .
+
+# Inspection cluster
+am:solar_panel a am:Concept ;
+    am:conceptId "solar_panel" ;
+    am:conceptType "object" ;
+    am:decayRate "0.001"^^xsd:double .
+
+am:drone_camera a am:Concept ;
+    am:conceptId "drone_camera" ;
+    am:conceptType "object" ;
+    am:decayRate "0.01"^^xsd:double .
+
+am:image_quality a am:Concept ;
+    am:conceptId "image_quality" ;
+    am:conceptType "state" ;
+    am:decayRate "0.08"^^xsd:double .
+
+am:light_conditions a am:Concept ;
+    am:conceptId "light_conditions" ;
+    am:conceptType "state" ;
+    am:decayRate "0.08"^^xsd:double .
+
+# Emergency cluster
+am:drone_battery a am:Concept ;
+    am:conceptId "drone_battery" ;
+    am:conceptType "state" ;
+    am:decayRate "0.05"^^xsd:double .
+
+am:landing_zone a am:Concept ;
+    am:conceptId "landing_zone" ;
+    am:conceptType "location" ;
+    am:decayRate "0.005"^^xsd:double .
+
+am:wind_speed a am:Concept ;
+    am:conceptId "wind_speed" ;
+    am:conceptType "state" ;
+    am:decayRate "0.1"^^xsd:double .
+
+am:airspace a am:Concept ;
+    am:conceptId "airspace" ;
+    am:conceptType "state" ;
+    am:decayRate "0.02"^^xsd:double .
+
+# Structural bridge node (not in either goal's 1-hop neighbourhood)
+am:panel_row a am:Concept ;
+    am:conceptId "panel_row" ;
+    am:conceptType "location" ;
+    am:decayRate "0.001"^^xsd:double .
+
+
+# --- Semantic edges ---
+
+# Inspection goal: 1-hop = {solar_panel, drone_camera, image_quality, light_conditions}
+[] a am:SemanticEdge ;
+   am:source am:inspect_pv_field ;
+   am:target am:solar_panel ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:inspect_pv_field ;
+   am:target am:drone_camera ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:inspect_pv_field ;
+   am:target am:image_quality ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:inspect_pv_field ;
+   am:target am:light_conditions ;
+   am:weight "1.0"^^xsd:double .
+
+# Emergency goal: 1-hop = {drone_battery, landing_zone, wind_speed, airspace}
+[] a am:SemanticEdge ;
+   am:source am:emergency_landing ;
+   am:target am:drone_battery ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:emergency_landing ;
+   am:target am:landing_zone ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:emergency_landing ;
+   am:target am:wind_speed ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:emergency_landing ;
+   am:target am:airspace ;
+   am:weight "1.0"^^xsd:double .
+
+# Inspection cluster internal edges
+[] a am:SemanticEdge ;
+   am:source am:solar_panel ;
+   am:target am:panel_row ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:drone_camera ;
+   am:target am:solar_panel ;
+   am:weight "1.5"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:drone_camera ;
+   am:target am:image_quality ;
+   am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:image_quality ;
+   am:target am:light_conditions ;
+   am:weight "1.5"^^xsd:double .
+
+# Cross-cluster structural bridges (2-hop, not in either goal's 1-hop neighbourhood)
+[] a am:SemanticEdge ;
+   am:source am:panel_row ;
+   am:target am:landing_zone ;
+   am:weight "2.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:drone_camera ;
+   am:target am:drone_battery ;
+   am:weight "2.5"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:light_conditions ;
+   am:target am:wind_speed ;
+   am:weight "2.0"^^xsd:double .
+
+
+# --- Instance-level concepts ---
+
+am:panel_A1 a am:InstanceConcept ;
+    am:conceptId "panel_A1" ;
+    am:conceptType "object" ;
+    am:decayRate "0.001"^^xsd:double ;
+    am:classId "solar_panel" .
+
+am:panel_A2 a am:InstanceConcept ;
+    am:conceptId "panel_A2" ;
+    am:conceptType "object" ;
+    am:decayRate "0.001"^^xsd:double ;
+    am:classId "solar_panel" .
+
+am:panel_B1 a am:InstanceConcept ;
+    am:conceptId "panel_B1" ;
+    am:conceptType "object" ;
+    am:decayRate "0.001"^^xsd:double ;
+    am:classId "solar_panel" .
+
+am:battery_main a am:InstanceConcept ;
+    am:conceptId "battery_main" ;
+    am:conceptType "state" ;
+    am:decayRate "0.05"^^xsd:double ;
+    am:classId "drone_battery" .
+
+am:lz_north a am:InstanceConcept ;
+    am:conceptId "lz_north" ;
+    am:conceptType "location" ;
+    am:decayRate "0.005"^^xsd:double ;
+    am:classId "landing_zone" .
+
+am:lz_south a am:InstanceConcept ;
+    am:conceptId "lz_south" ;
+    am:conceptType "location" ;
+    am:decayRate "0.005"^^xsd:double ;
+    am:classId "landing_zone" .
+
+am:camera_main a am:InstanceConcept ;
+    am:conceptId "camera_main" ;
+    am:conceptType "object" ;
+    am:decayRate "0.01"^^xsd:double ;
+    am:classId "drone_camera" .
+
+
+# --- Instance relations ---
+
+[] a am:InstanceEdge ;
+   am:source am:panel_A1 ;
+   am:target am:panel_A2 ;
+   am:weight "1.0"^^xsd:double ;
+   am:relationType "partOf" .
+
+[] a am:InstanceEdge ;
+   am:source am:panel_A2 ;
+   am:target am:panel_B1 ;
+   am:weight "2.0"^^xsd:double ;
+   am:relationType "partOf" .
+
+[] a am:InstanceEdge ;
+   am:source am:camera_main ;
+   am:target am:panel_A1 ;
+   am:weight "1.0"^^xsd:double ;
+   am:relationType "monitors" .
+
+[] a am:InstanceEdge ;
+   am:source am:lz_north ;
+   am:target am:lz_south ;
+   am:weight "1.5"^^xsd:double ;
+   am:relationType "locatedAt" .

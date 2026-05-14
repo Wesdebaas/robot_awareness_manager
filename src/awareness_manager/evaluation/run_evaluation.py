@@ -8,7 +8,6 @@ Produces seven thesis figures saved to evaluation/figures/:
     fig2_scheduling_comparison.png- Formula 3: AM-guided vs random vs no-refresh
     fig3_anticipatory_horizon.png - Formula 2: pre-tuning as future goal ETA → 0
     fig4_memory_budget.png        - Formula 4: attention window size vs budget B
-    fig5_class_instance_split.png - Class vs instance attention (D6.1 testbed)
     fig8_certainty_threshold.png  - Phase 4: refresh count vs epistemic error trade-off
     fig9_hierarchical_horizons.png- Phase 5: global / phase / task blending over time
 
@@ -26,10 +25,6 @@ import matplotlib.ticker as ticker
 
 from awareness_manager.awareness_manager import AwarenessManager
 from awareness_manager.scenarios.pv_inspection import build_pv_inspection_kb
-from awareness_manager.scenarios.manufacturing_d61 import (
-    build_manufacturing_d61_kb,
-    build_manufacturing_d61_instance_kb,
-)
 
 # ---------------------------------------------------------------------------
 # Output directory
@@ -448,180 +443,6 @@ def fig4_memory_budget() -> None:
 
 
 # ===========================================================================
-# Figure 5 - Class vs instance attention split  (D6.1 manufacturing testbed)
-# ===========================================================================
-
-def fig5_class_instance_split() -> None:
-    """
-    Two-panel stacked bar chart using the CoreSense D6.1 manufacturing scenario.
-
-    For each concept (classes left, instances right), bars are stacked to show:
-        • Class-gate contribution  - spreading activation from the goal class graph
-        • Relational boost         - additional attention from instance-graph proximity
-
-    Cross-class instances (class-gate = 0, relational > 0) are highlighted in
-    orange to make the cross-class effect visually explicit.
-
-    Left panel:  goal = assemble_gear_unit
-    Right panel: goal = transport_parts
-    """
-    kb  = build_manufacturing_d61_kb()
-    ikb = build_manufacturing_d61_instance_kb()
-
-    def _compute(goal: str) -> tuple[dict, dict, dict]:
-        """Return (class_attn, inst_attn_full, inst_relational_boost)."""
-        am = AwarenessManager(
-            kb, goal_id=goal,
-            budget=5, observation_interval=2.0,
-            instance_kb=ikb, instance_relational_weight=0.3,
-        )
-        am.tick(dt=0.0)   # single tick at dt=0 to compute attention without drift
-        full = am.attention()
-
-        class_attn = {cid: full.get(cid, 0.0) for cid in kb.concept_ids()}
-        inst_full  = {iid: full.get(iid, 0.0) for iid in ikb.instance_ids()}
-
-        # Relational boost = instance attention minus class-gate contribution
-        inst_boost: dict[str, float] = {}
-        for iid in ikb.instance_ids():
-            inst = ikb.get_instance(iid)
-            gate  = class_attn.get(inst.class_id, 0.0)
-            boost = max(0.0, inst_full[iid] - gate)
-            inst_boost[iid] = boost
-
-        return class_attn, inst_full, inst_boost
-
-    # ── Colour palette ─────────────────────────────────────────────────────
-    C_CLASS_ON   = '#2196F3'   # blue - attended class
-    C_CLASS_OFF  = '#CFD8DC'   # light grey - unattended class
-    C_INST_GATE  = '#4CAF50'   # green - instance class-gate contribution
-    C_INST_BOOST = '#FF9800'   # amber - relational boost on top of gate
-    C_CROSS_ONLY = '#F44336'   # red - cross-class (gate=0, boost>0)
-
-    goals = ['assemble_gear_unit', 'transport_parts']
-    titles = [
-        'goal: assemble_gear_unit\n(assembly robot, gears, shafts, fasteners)',
-        'goal: transport_parts\n(mobile robot, production machines)',
-    ]
-
-    fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
-    fig.suptitle(
-        'Fig 5 - Class vs instance attention distribution  (CoreSense D6.1 Manufacturing Testbed)\n'
-        'Stacked bars: ■ class-gate  ■ relational boost.  '
-        'Cross-class instances (class gate = 0, boost > 0) shown in red.',
-        fontsize=10,
-    )
-
-    for ax, goal, title in zip(axes, goals, titles):
-        class_attn, inst_full, inst_boost = _compute(goal)
-
-        # ── Build ordered concept lists ──────────────────────────────────
-        # Classes sorted by attention descending
-        classes_sorted = sorted(kb.concept_ids(),
-                                key=lambda c: class_attn[c], reverse=True)
-        # Instances sorted by total attention descending
-        insts_sorted = sorted(ikb.instance_ids(),
-                              key=lambda i: inst_full[i], reverse=True)
-
-        all_labels   = classes_sorted + [''] + insts_sorted   # blank = visual gap
-        n_cls        = len(classes_sorted)
-        n_inst       = len(insts_sorted)
-        total        = len(all_labels)
-        xs           = np.arange(total)
-
-        bar_height   = 0.62
-
-        # ── Draw class bars ───────────────────────────────────────────────
-        for i, cid in enumerate(classes_sorted):
-            a = class_attn[cid]
-            color = C_CLASS_ON if a > 0.001 else C_CLASS_OFF
-            ax.bar(i, a, width=bar_height, color=color, alpha=0.88, zorder=3)
-
-        # ── Draw instance bars (stacked: gate + boost) ────────────────────
-        offset = n_cls + 1   # +1 for the gap
-        for j, iid in enumerate(insts_sorted):
-            xi = offset + j
-            inst    = ikb.get_instance(iid)
-            gate    = class_attn.get(inst.class_id, 0.0)
-            boost   = inst_boost[iid]
-            total_a = inst_full[iid]
-
-            is_cross_class = gate < 0.001 and total_a > 0.001
-
-            if is_cross_class:
-                # Entirely relational - draw in red
-                ax.bar(xi, total_a, width=bar_height,
-                       color=C_CROSS_ONLY, alpha=0.88, zorder=3)
-            else:
-                # Class-gate base
-                if gate > 0:
-                    ax.bar(xi, gate, width=bar_height,
-                           color=C_INST_GATE, alpha=0.88, zorder=3)
-                # Relational boost on top
-                if boost > 0.001:
-                    ax.bar(xi, boost, width=bar_height, bottom=gate,
-                           color=C_INST_BOOST, alpha=0.88, zorder=3)
-
-        # ── Divider line between classes and instances ────────────────────
-        ax.axvline(n_cls + 0.5, color='#999999', linewidth=1.0,
-                   linestyle='--', zorder=1)
-        ax.text(n_cls * 0.5,        0.97, 'classes',   ha='center',
-                va='top', fontsize=8, color='#555555',
-                transform=ax.get_xaxis_transform())
-        ax.text(n_cls + 1 + n_inst * 0.5, 0.97, 'instances', ha='center',
-                va='top', fontsize=8, color='#555555',
-                transform=ax.get_xaxis_transform())
-
-        # ── Axis formatting ───────────────────────────────────────────────
-        tick_labels = [c for c in classes_sorted] + [''] + list(insts_sorted)
-        ax.set_xticks(xs)
-        ax.set_xticklabels(tick_labels, rotation=40, ha='right', fontsize=7.5)
-        ax.set_ylabel('Attention  A')
-        ax.set_ylim(0, 1.08)
-        ax.set_title(title, fontsize=9.5)
-        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
-
-        # Annotate cross-class instances with a small marker
-        for j, iid in enumerate(insts_sorted):
-            xi = offset + j
-            inst = ikb.get_instance(iid)
-            gate = class_attn.get(inst.class_id, 0.0)
-            a    = inst_full[iid]
-            if gate < 0.001 and a > 0.001:
-                ax.text(xi, a + 0.02, '*', ha='center', va='bottom',
-                        fontsize=9, color=C_CROSS_ONLY, fontweight='bold')
-
-    # ── Shared legend ─────────────────────────────────────────────────────
-    from matplotlib.patches import Patch
-    legend_items = [
-        Patch(facecolor=C_CLASS_ON,   alpha=0.88, label='Class - attended'),
-        Patch(facecolor=C_CLASS_OFF,  alpha=0.88, label='Class - not attended'),
-        Patch(facecolor=C_INST_GATE,  alpha=0.88, label='Instance - class-gate contribution'),
-        Patch(facecolor=C_INST_BOOST, alpha=0.88, label='Instance - relational boost (on top)'),
-        Patch(facecolor=C_CROSS_ONLY, alpha=0.88, label='Instance - cross-class (gate=0, boost>0)  ✕'),
-    ]
-    fig.legend(handles=legend_items, loc='lower center', ncol=5,
-               fontsize=8, bbox_to_anchor=(0.5, -0.02))
-
-    fig.tight_layout(rect=[0, 0.06, 1, 1])
-    path = _OUT / 'fig5_class_instance_split.png'
-    fig.savefig(path)
-    plt.close(fig)
-    print(f'[Fig 5]  saved → {path}')
-
-    # Console summary
-    for goal in goals:
-        class_attn, inst_full, inst_boost = _compute(goal)
-        print(f'         goal={goal}:')
-        cross = [(iid, inst_full[iid])
-                 for iid in ikb.instance_ids()
-                 if class_attn.get(ikb.get_instance(iid).class_id, 0.0) < 0.001
-                 and inst_full[iid] > 0.001]
-        print(f'           cross-class instances with attention: '
-              f'{[f"{i}({a:.3f})" for i, a in cross]}')
-
-
-# ===========================================================================
 # Figure 8 - Certainty threshold: refresh count vs epistemic error  (Phase 4)
 # ===========================================================================
 
@@ -872,8 +693,6 @@ def main() -> None:
     fig3_anticipatory_horizon()
     print()
     fig4_memory_budget()
-    print()
-    fig5_class_instance_split()
     print()
     fig8_certainty_threshold()
     print()

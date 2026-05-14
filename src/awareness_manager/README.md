@@ -16,12 +16,14 @@ Master's thesis - Wessel Remmelzwaan, TU Delft / CoreSense Horizon Europe.
 Install Python dependencies:
 
 ```bash
-pip install matplotlib networkx numpy
+pip install matplotlib networkx numpy pyoxigraph
 ```
 
 ---
 
 ## Setup
+
+This package also requires [`triplestar_kb`](https://github.com/kas-lab/triplestar_kb) to be cloned into `src/` alongside this package — it provides the RDF/SPARQL backend used to load scenario ontologies.
 
 ### Option A - colcon (required for the ROS 2 node; also works for all demos)
 
@@ -126,9 +128,6 @@ python3 src/awareness_manager/demos/run_birdhouse_viz.py
 
 # PV inspection scenario:
 python3 src/awareness_manager/demos/run_pv_inspection_viz.py
-
-# Manufacturing scenario (cross-class instance attention):
-python3 src/awareness_manager/demos/run_manufacturing_demo.py
 ```
 
 ---

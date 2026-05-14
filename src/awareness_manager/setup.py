@@ -15,6 +15,9 @@ setup(
             'launch/pv_inspection_demo.launch.py',
         ]),
     ],
+    package_data={
+        'awareness_manager.scenarios': ['*.ttl'],
+    },
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='Wessel',
