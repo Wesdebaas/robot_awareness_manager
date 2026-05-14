@@ -66,6 +66,7 @@ _COL_MISSION      = CHANNEL_COLORS['mission']        # '#4a8af4'
 _COL_ANTICIPATORY = CHANNEL_COLORS['anticipatory']   # '#9a6af4'
 _COL_RELATIONAL   = CHANNEL_COLORS['relational']     # '#44bb88'
 _COL_SURPRISE     = CHANNEL_COLORS['surprise']       # '#f4944a'
+_COL_PRIORITY     = '#e8c84a'                        # golden yellow — E × A priority
 
 # ── Static Cytoscape stylesheet ──────────────────────────────────────────────
 STYLESHEET = [
@@ -393,10 +394,11 @@ def _hover_card(data: dict | None) -> html.Div:
 
     ch_table = html.Table(
         [
-            _ch_row("mission",      cm, _COL_MISSION),
-            _ch_row("anticipatory", ca, _COL_ANTICIPATORY),
-            _ch_row("relational",   cr, _COL_RELATIONAL),
-            _ch_row("surprise",     cs, _COL_SURPRISE),
+            _ch_row("mission",      cm,    _COL_MISSION),
+            _ch_row("anticipatory", ca,    _COL_ANTICIPATORY),
+            _ch_row("relational",   cr,    _COL_RELATIONAL),
+            _ch_row("surprise",     cs,    _COL_SURPRISE),
+            _ch_row("E × A",        e * a, _COL_PRIORITY),
         ],
         style={"border-collapse": "collapse"},
     )
@@ -442,11 +444,13 @@ def _make_sparkline(history: list, node_id: str, cursor_t: float | None = None) 
     if not history:
         return _empty_sparkline()
 
-    t = [h[0] for h in history]
-    a = [h[1] for h in history]
-    m = [h[2] for h in history]   # mission + anticipatory (blue)
-    r = [h[3] for h in history]   # relational (teal)
-    s = [h[4] for h in history]   # surprise (orange)
+    t  = [h[0] for h in history]
+    a  = [h[1] for h in history]
+    an = [h[7] for h in history]                    # anticipatory only (purple)
+    m  = [h[2] - h[7] for h in history]            # mission-only / F1 (blue)
+    r  = [h[3] for h in history]                   # relational (teal)
+    s  = [h[4] for h in history]                   # surprise (orange)
+    p  = [h[5] * h[1] for h in history]            # E × A priority (golden)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t, y=a, fill="tozeroy",
@@ -455,9 +459,13 @@ def _make_sparkline(history: list, node_id: str, cursor_t: float | None = None) 
                              mode="lines", hoverinfo="none"))
     fig.add_trace(go.Scatter(x=t, y=m, line=dict(color=_COL_MISSION, width=1.5),
                              mode="lines", hoverinfo="none"))
+    fig.add_trace(go.Scatter(x=t, y=an, line=dict(color=_COL_ANTICIPATORY, width=1.5),
+                             mode="lines", hoverinfo="none"))
     fig.add_trace(go.Scatter(x=t, y=r, line=dict(color=_COL_RELATIONAL, width=1.5),
                              mode="lines", hoverinfo="none"))
     fig.add_trace(go.Scatter(x=t, y=s, line=dict(color=_COL_SURPRISE, width=1.5),
+                             mode="lines", hoverinfo="none"))
+    fig.add_trace(go.Scatter(x=t, y=p, line=dict(color=_COL_PRIORITY, width=2.0, dash="dot"),
                              mode="lines", hoverinfo="none"))
 
     layout = dict(

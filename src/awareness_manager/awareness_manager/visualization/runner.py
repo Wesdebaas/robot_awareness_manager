@@ -23,7 +23,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from awareness_manager.visualization.snapshot import compute_positions, get_snapshot
 
@@ -63,14 +63,20 @@ class SimulationRunner:
         observe_top: bool = True,
         history_maxlen: int = 300,
         logger: 'TraceLogger | None' = None,
+        tick_hook: 'Callable[[AttentionStrategy, float], None] | None' = None,
+        observe_interval: float | None = None,
     ) -> None:
         self._am = am
         self._dt = dt
         self._observe_top = observe_top
         self._history_maxlen = history_maxlen
         self._logger = logger
+        self._tick_hook = tick_hook
+        self._observe_interval = observe_interval
+        self._time_since_observe: float = 0.0
         self._lock = threading.Lock()
         self._schedule: list[str] = []
+        self._last_observed: list[str] = []
         self._elapsed: float = 0.0
         self._running = False
         self._thread: threading.Thread | None = None
@@ -114,7 +120,7 @@ class SimulationRunner:
         with self._lock:
             return get_snapshot(
                 self._am,
-                self._schedule,
+                self._last_observed,
                 self._elapsed,
                 self._positions,
                 threshold=threshold,
@@ -216,9 +222,17 @@ class SimulationRunner:
             t0 = time.perf_counter()
             with self._lock:
                 self._schedule = self._am.tick(dt=self._dt)
+                self._time_since_observe += self._dt
                 if self._observe_top and self._schedule:
-                    self._am.observe(self._schedule[0])
+                    if (self._observe_interval is None
+                            or self._time_since_observe >= self._observe_interval):
+                        for cid in self._schedule:
+                            self._am.observe(cid)
+                        self._last_observed = list(self._schedule)
+                        self._time_since_observe = 0.0
                 self._elapsed += self._dt
+                if self._tick_hook is not None:
+                    self._tick_hook(self._am, self._elapsed)
                 self._record_history()
                 if self._logger is not None:
                     self._logger.record(self._elapsed, self._schedule)

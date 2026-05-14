@@ -20,26 +20,26 @@ def build_pv_inspection_kb() -> KnowledgeBase:
     as the ETA of emergency_landing decreases.
 
     Decay rates (δ, s⁻¹):
-        0.0   task nodes            – abstract goals, no decay
-        0.001 solar_panel           – static infrastructure
-        0.001 panel_row             – fixed grid location
-        0.005 landing_zone          – usually clear, can be obstructed
-        0.01  drone_camera          – calibration drift, vibration
-        0.02  airspace              – other drones/birds move unpredictably
-        0.05  drone_battery         – drains continuously during flight
-        0.08  light_conditions      – clouds and sun angle change over minutes
-        0.08  image_quality         – focus, vibration, shadow/blur artifacts (D7.1 UC4)
-        0.1   wind_speed            – gusts change on a seconds timescale
+        0.0   task nodes            - abstract goals, no decay
+        0.001 solar_panel           - static infrastructure
+        0.001 panel_row             - fixed grid location
+        0.005 landing_zone          - usually clear, can be obstructed
+        0.01  drone_camera          - calibration drift, vibration
+        0.02  airspace              - other drones/birds move unpredictably
+        0.05  drone_battery         - drains continuously during flight
+        0.08  light_conditions      - clouds and sun angle change over minutes
+        0.08  image_quality         - focus, vibration, shadow/blur artifacts (D7.1 UC4)
+        0.1   wind_speed            - gusts change on a seconds timescale
 
     Grounding in D7.1:
-        solar_panel, drone_camera, light_conditions – Inspection mode captures optical
+        solar_panel, drone_camera, light_conditions - Inspection mode captures optical
           and thermal images; light directly affects image quality.
-        image_quality – UC4 (Valid images): online analysis checks shadows, reflections,
+        image_quality - UC4 (Valid images): online analysis checks shadows, reflections,
           blur.  Justifies a fast-decaying state concept in the inspection cluster.
-        drone_battery – Table 7.1 disturbance: battery discharge triggers emergency.
-        landing_zone  – Emergency mode: robot identifies a clear landing site.
-        wind_speed    – Emergency mode: must be below threshold for safe landing.
-        airspace      – UC2: airspace invasion (bird, other drone) triggers emergency.
+        drone_battery - Table 7.1 disturbance: battery discharge triggers emergency.
+        landing_zone  - Emergency mode: robot identifies a clear landing site.
+        wind_speed    - Emergency mode: must be below threshold for safe landing.
+        airspace      - UC2: airspace invasion (bird, other drone) triggers emergency.
     """
     kb = KnowledgeBase()
 
@@ -98,15 +98,15 @@ def build_pv_inspection_instance_kb() -> InstanceKnowledgeBase:
         - During emergency_landing:  battery_main and landing zone instances become critical.
 
     Instance relations use typed edges:
-        partOf     – instance belongs to a larger structure
-        monitors   – sensor instance is targeted at an object instance
-        locatedAt  – instance is physically at a location
+        partOf     - instance belongs to a larger structure
+        monitors   - sensor instance is targeted at an object instance
+        locatedAt  - instance is physically at a location
 
     Instances (7):
-        panel_A1, panel_A2, panel_B1  – solar panels (class: solar_panel)
-        battery_main                   – primary drone battery (class: drone_battery)
-        lz_north, lz_south             – two landing zones (class: landing_zone)
-        camera_main                    – primary inspection camera (class: drone_camera)
+        panel_A1, panel_A2, panel_B1  - solar panels (class: solar_panel)
+        battery_main                   - primary drone battery (class: drone_battery)
+        lz_north, lz_south             - two landing zones (class: landing_zone)
+        camera_main                    - primary inspection camera (class: drone_camera)
     """
     ikb = InstanceKnowledgeBase()
 

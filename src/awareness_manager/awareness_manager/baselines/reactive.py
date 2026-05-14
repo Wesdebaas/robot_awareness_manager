@@ -146,12 +146,17 @@ class ReactiveBaseline:
 
         self._attention = {}
         for cid in self._kb.concept_ids():
-            self._attention[cid] = 1.0 if cid in active_classes else 0.0
+            if cid == self._goal_id:
+                self._attention[cid] = 1.0
+            elif cid in active_classes:
+                self._attention[cid] = 0.5
+            else:
+                self._attention[cid] = 0.0
 
         if self._instance_kb is not None:
             for iid in self._instance_kb.instance_ids():
                 inst = self._instance_kb.get_instance(iid)
-                self._attention[iid] = 1.0 if inst.class_id in active_classes else 0.0
+                self._attention[iid] = 0.5 if inst.class_id in active_classes else 0.0
 
         # Schedulable = active concepts with decay_rate > 0 (skip task nodes,
         # which have decay_rate=0 and are never worth refreshing).
@@ -187,17 +192,17 @@ class ReactiveBaseline:
         if self._goal_id != prev_goal:
             self._rebuild_active_set()
 
-        # Round-robin: take next min(budget, |active|) concepts from the cycle
+        # Round-robin: return next min(budget, |active|) concepts without
+        # advancing the index — index advances in observe() so it only moves
+        # forward when an observation actually fires.
         n = len(self._active_list)
         if n == 0:
             return []
         take = min(self._budget, n)
-        schedule = [
+        return [
             self._active_list[(self._rr_index + i) % n]
             for i in range(take)
         ]
-        self._rr_index = (self._rr_index + take) % n
-        return schedule
 
     def observe(self, concept_id: str) -> float:
         """Formula 3 refresh (same computation as AwarenessManager.observe())."""
@@ -205,13 +210,19 @@ class ReactiveBaseline:
             dr = self._kb.get_concept(concept_id).decay_rate
             refresh = 1.0 - math.exp(-dr * self._observation_interval) if dr > 0 else 0.0
             self._kb.refresh_concept(concept_id, refresh=refresh)
-            return refresh
-        if self._instance_kb is not None and concept_id in self._instance_kb.instance_ids():
+        elif self._instance_kb is not None and concept_id in self._instance_kb.instance_ids():
             dr = self._instance_kb.get_instance(concept_id).decay_rate
             refresh = 1.0 - math.exp(-dr * self._observation_interval) if dr > 0 else 0.0
             self._instance_kb.refresh_instance(concept_id, refresh=refresh)
-            return refresh
-        return 0.0
+        else:
+            return 0.0
+
+        # Advance round-robin on each observation so the index only moves
+        # forward when observations actually fire, not on every tick.
+        n = len(self._active_list)
+        if n > 0:
+            self._rr_index = (self._rr_index + 1) % n
+        return refresh
 
     def attention(self) -> dict[str, float]:
         return dict(self._attention)

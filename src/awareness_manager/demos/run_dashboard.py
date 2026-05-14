@@ -14,8 +14,22 @@ Usage (replay mode):
 Usage (compare mode):
     python src/awareness_manager/demos/run_dashboard.py --replay traces/am_run --compare traces/reactive_run
 
+Channel colour demo (shows all four node colours):
+    python src/awareness_manager/demos/run_dashboard.py --demo
+
+    What to watch:
+      blue   (mission)    - all nodes driven by the active goal via spreading activation
+      teal   (relational) - battery_main: attended because it powers camera_main
+                            (relational instance edge, not directly goal-relevant).
+                            Turns blue once the emergency goal fires and drone_battery
+                            becomes mission-relevant.
+      orange (surprise)   - image_quality: flashes orange every ~10 s when a simulated
+                            sensor reading violates the current expected value.
+      darker shade        - higher epistemic error (concept is stale / unobserved)
+
 Flags:
     --strategy NAME  Live-mode strategy: awareness_manager (default), always_on, reactive.
+    --demo           Run the channel-colour demo (overrides --strategy).
     --replay PATH    Load a trace directory and run in offline replay mode.
     --compare PATH   Second trace for A/B comparison (requires --replay for first trace).
     --log            Enable trace logging to disk in live mode.
@@ -93,22 +107,90 @@ def _build_reactive(args: argparse.Namespace):
     return strategy, True  # observe_top=True - runner must call observe(); round-robin is selection only
 
 
+def _build_channel_demo():
+    """
+    Build an AM configured to show all four node colour channels.
+
+    Two additions on top of the standard PV scenario:
+
+    1. Relational edge  camera_main → battery_main (weight=0.5, 'powers')
+       During inspect_pv_field, camera_main has high mission attention (drone_camera
+       is 1-hop from the goal).  The low-weight edge makes battery_main's relational
+       boost exceed its class-gate (drone_battery is 2-hop, class attention ≈ 0.25),
+       so battery_main shows TEAL.  When emergency_landing fires, drone_battery
+       becomes 1-hop and mission attention surges → battery_main turns BLUE.
+
+    2. Surprise tick hook  injects observe_with_feedback('image_quality', ...) every
+       10 simulated seconds, alternating observed=0.0 / 1.0.  The first call sets
+       the expected value; each subsequent call produces epsilon=1.0 ≫ threshold →
+       image_quality flashes ORANGE and the violation propagates to its 1-hop neighbours.
+
+    lambda_horizon=0.5 keeps the anticipatory pre-tuning discount very small for the
+    60 s eta, so relational spread (teal) is not overwhelmed by anticipatory (blue)
+    during the inspection phase.
+    """
+    from awareness_manager.awareness_manager import AwarenessManager
+    from awareness_manager.scenarios.pv_inspection import (
+        build_pv_inspection_instance_kb,
+        build_pv_inspection_kb,
+    )
+
+    kb = build_pv_inspection_kb()
+    ikb = build_pv_inspection_instance_kb()
+    # Cross-cluster instance edge: camera draws power from the battery.
+    # Low weight (0.5) → short Dijkstra distance → strong relational spread.
+    ikb.add_instance_relation('camera_main', 'battery_main', weight=0.5,
+                              relation_type='powers')
+
+    am = AwarenessManager(
+        kb,
+        goal_id='inspect_pv_field',
+        budget=2,
+        observation_interval=10.0,
+        lambda_horizon=0.5,        # high: keeps anticipatory near-zero for far-future goals
+        instance_kb=ikb,
+        instance_relational_weight=0.8,  # boosted to make relational beat class-gate
+    )
+    am.queue_goal('emergency_landing', eta=60.0, level='global')
+
+    # Surprise injection: alternates image_quality between 0.0 and 1.0 every 10 s.
+    # First call sets the predicted value (no violation); each subsequent call
+    # produces epsilon=1.0, triggering orange on image_quality and its neighbours.
+    _last_surprise = [0.0]
+    _flip = [True]
+    _surprise_interval = 10.0
+
+    def _tick_hook(strategy, elapsed: float) -> None:
+        if elapsed - _last_surprise[0] >= _surprise_interval:
+            observed = 0.0 if _flip[0] else 1.0
+            strategy.observe_with_feedback('image_quality', observed_value=observed)
+            _flip[0] = not _flip[0]
+            _last_surprise[0] = elapsed
+
+    return am, True, _tick_hook  # strategy, observe_top, tick_hook
+
+
 def _build_live(args: argparse.Namespace):
     from awareness_manager.visualization.runner import SimulationRunner
 
-    strategy_name = args.strategy or "awareness_manager"
-    builders = {
-        "awareness_manager": _build_am,
-        "always_on": _build_always_on,
-        "reactive": _build_reactive,
-    }
-    if strategy_name not in builders:
-        raise SystemExit(
-            f"Unknown strategy '{strategy_name}'. "
-            f"Choose from: {', '.join(builders)}"
-        )
+    tick_hook = None
+    if args.demo:
+        strategy, observe_top, tick_hook = _build_channel_demo()
+        strategy_name = "channel_demo"
+    else:
+        strategy_name = args.strategy or "awareness_manager"
+        builders = {
+            "awareness_manager": _build_am,
+            "always_on": _build_always_on,
+            "reactive": _build_reactive,
+        }
+        if strategy_name not in builders:
+            raise SystemExit(
+                f"Unknown strategy '{strategy_name}'. "
+                f"Choose from: {', '.join(builders)}"
+            )
+        strategy, observe_top = builders[strategy_name](args)
 
-    strategy, observe_top = builders[strategy_name](args)
     print(f"  Strategy: {strategy_name}  observe_top={observe_top}")
 
     logger = None
@@ -129,7 +211,8 @@ def _build_live(args: argparse.Namespace):
 
     runner = SimulationRunner(
         strategy, dt=0.1, observe_top=observe_top,
-        history_maxlen=300, logger=logger,
+        history_maxlen=300, logger=logger, tick_hook=tick_hook,
+        observe_interval=2.0,
     )
     return runner
 
@@ -151,6 +234,10 @@ def main() -> None:
     parser.add_argument(
         "--strategy", metavar="NAME", default="awareness_manager",
         help="Live-mode strategy: awareness_manager (default), always_on, reactive",
+    )
+    parser.add_argument(
+        "--demo", action="store_true",
+        help="Run the channel-colour demo (shows teal relational + orange surprise nodes)",
     )
     parser.add_argument("--replay", metavar="PATH",
                         help="Replay a trace directory (offline mode)")
@@ -181,7 +268,8 @@ def main() -> None:
         print("  Robot Awareness Dashboard - Replay mode")
         source = _build_replay(args.replay)
     else:
-        print(f"  Robot Awareness Dashboard - {SCENARIO} (live)")
+        label = "channel demo" if args.demo else SCENARIO
+        print(f"  Robot Awareness Dashboard - {label} (live)")
         source = _build_live(args)
     print(f"  Open http://localhost:{args.port} in your browser")
     print("  Press Ctrl+C to stop")
