@@ -37,12 +37,16 @@ am:emergency_landing a am:Concept ;
 am:solar_panel a am:Concept ;
     am:conceptId "solar_panel" ;
     am:conceptType "object" ;
-    am:decayRate "0.001"^^xsd:double .
+    am:decayRate "0.001"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" .
 
 am:drone_camera a am:Concept ;
     am:conceptId "drone_camera" ;
     am:conceptType "object" ;
-    am:decayRate "0.01"^^xsd:double .
+    am:decayRate "0.01"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" .
 
 am:image_quality a am:Concept ;
     am:conceptId "image_quality" ;
@@ -58,12 +62,17 @@ am:light_conditions a am:Concept ;
 am:drone_battery a am:Concept ;
     am:conceptId "drone_battery" ;
     am:conceptType "state" ;
-    am:decayRate "0.05"^^xsd:double .
+    am:decayRate "0.05"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "max" .
 
 am:landing_zone a am:Concept ;
     am:conceptId "landing_zone" ;
     am:conceptType "location" ;
-    am:decayRate "0.005"^^xsd:double .
+    am:decayRate "0.005"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "0.8"^^xsd:double .
 
 am:wind_speed a am:Concept ;
     am:conceptId "wind_speed" ;

@@ -1,8 +1,12 @@
 import time
+from typing import TYPE_CHECKING
 
 import networkx as nx
 
-from awareness_manager.concept import Concept
+from awareness_manager.concept import Concept, PresenceState
+
+if TYPE_CHECKING:
+    from awareness_manager.instance_knowledge_base import InstanceKnowledgeBase
 
 
 class KnowledgeBase:
@@ -125,12 +129,52 @@ class KnowledgeBase:
         represents the uncertainty reduction from an active observation.
 
         Epistemic error is clamped to [0, 1].
+
+        No-op for derived-mode concepts — their E is managed entirely by
+        update_derived_class_errors() and cannot be set through observation.
         """
         concept = self._concepts[concept_id]
+        if concept.class_e_mode == 'derived':
+            return
         concept.epistemic_error = max(0.0, min(1.0,
             concept.epistemic_error + concept.decay_rate - refresh
         ))
         concept.last_updated = time.time()
+
+    def update_derived_class_errors(self, instance_kb: 'InstanceKnowledgeBase') -> None:
+        """
+        Recompute epistemic error for all derived-mode concepts from their instances.
+
+        Contributing instances: PRESENT + SUSPECTED_ABSENT (CONFIRMED_ABSENT excluded).
+        Aggregation is per-concept and configurable: 'mean', 'max', or 'min'.
+
+        When no contributing instances exist, the concept's absent_fallback_e is used
+        (default 1.0 — maximum uncertainty when the robot has lost all instances).
+
+        Called by AwarenessManager.tick() after instance_kb.tick() so derived class E
+        always reflects the freshest instance E values within a given tick.
+        """
+        for concept in self._concepts.values():
+            if concept.class_e_mode != 'derived':
+                continue
+            contributing = [
+                instance_kb.get_instance(iid)
+                for iid in instance_kb.instances_of_class(concept.concept_id)
+                if instance_kb.get_instance(iid).presence_state in (
+                    PresenceState.PRESENT, PresenceState.SUSPECTED_ABSENT
+                )
+            ]
+            if not contributing:
+                concept.epistemic_error = concept.absent_fallback_e
+            else:
+                errors = [inst.epistemic_error for inst in contributing]
+                agg = concept.derived_aggregation
+                if agg == 'max':
+                    concept.epistemic_error = max(errors)
+                elif agg == 'min':
+                    concept.epistemic_error = min(errors)
+                else:  # 'mean' is the default
+                    concept.epistemic_error = sum(errors) / len(errors)
 
     def tick(self, dt: float, apply_drift: bool = True) -> None:
         """
@@ -147,6 +191,8 @@ class KnowledgeBase:
         if not apply_drift:
             return
         for concept in self._concepts.values():
+            if concept.class_e_mode == 'derived':
+                continue  # E is managed by update_derived_class_errors; skip drift
             concept.epistemic_error = min(1.0,
                 concept.epistemic_error + concept.decay_rate * dt
             )

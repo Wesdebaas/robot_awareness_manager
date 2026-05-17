@@ -1,5 +1,20 @@
 import time
 from dataclasses import dataclass, field
+from enum import Enum
+
+
+class PresenceState(str, Enum):
+    """Runtime presence state for instance-level concepts.
+
+    PRESENT          — instance is actively tracked in the world.
+    SUSPECTED_ABSENT — not seen recently; still scheduled at reduced priority
+                       so the robot can look for it to confirm absence.
+    CONFIRMED_ABSENT — definitively gone; excluded from attention, drift, and
+                       relational spreading. Kept in the dict for re-discovery.
+    """
+    PRESENT          = 'present'
+    SUSPECTED_ABSENT = 'suspected_absent'
+    CONFIRMED_ABSENT = 'confirmed_absent'
 
 
 @dataclass
@@ -35,6 +50,14 @@ class Concept:
     predicted_value: float | None = None  # last cached expected observation
     prediction_error: float = 0.0         # |observed − predicted| at last update
 
+    # Class E mode — controls how epistemic error is managed for this concept.
+    # 'standalone': E drifts and is refreshed independently (default behaviour).
+    # 'derived':    E = aggregation of instance E values; never drifted or refreshed
+    #               directly. Requires an InstanceKnowledgeBase to be meaningful.
+    class_e_mode: str = 'standalone'      # 'standalone' | 'derived'
+    derived_aggregation: str = 'mean'     # 'mean' | 'max' | 'min'  (derived mode only)
+    absent_fallback_e: float = 1.0        # E when zero active instances remain (derived only)
+
 
 @dataclass
 class InstanceConcept(Concept):
@@ -61,5 +84,13 @@ class InstanceConcept(Concept):
         both ontological classes AND the instances populating them?"
     """
 
-    class_id: str = ""      # concept_id of the parent class in KnowledgeBase
+    class_id: str = ""      # concept_id of the primary parent class in KnowledgeBase
+    extra_class_ids: list[str] = field(default_factory=list)  # additional class memberships
     properties: dict = field(default_factory=dict)  # arbitrary instance metadata
+    presence_state: PresenceState = PresenceState.PRESENT
+
+    @property
+    def all_class_ids(self) -> list[str]:
+        """All class memberships: primary class_id followed by any extra memberships."""
+        ids = [self.class_id] if self.class_id else []
+        return ids + self.extra_class_ids

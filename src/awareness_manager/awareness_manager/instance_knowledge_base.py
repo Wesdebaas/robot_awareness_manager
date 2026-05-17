@@ -2,7 +2,7 @@ import time
 
 import networkx as nx
 
-from awareness_manager.concept import InstanceConcept
+from awareness_manager.concept import InstanceConcept, PresenceState
 
 
 class InstanceKnowledgeBase:
@@ -91,6 +91,52 @@ class InstanceKnowledgeBase:
         self._graph.add_edge(id_a, id_b, weight=weight, relation_type=relation_type)
 
     # ------------------------------------------------------------------
+    # Presence state management
+    # ------------------------------------------------------------------
+
+    def mark_suspected_absent(self, instance_id: str) -> None:
+        """Transition instance to SUSPECTED_ABSENT.
+
+        The instance remains in the schedule at reduced priority so the robot
+        can observe it to confirm or deny absence.
+        """
+        if instance_id not in self._instances:
+            raise ValueError(f"Instance '{instance_id}' not in InstanceKnowledgeBase.")
+        self._instances[instance_id].presence_state = PresenceState.SUSPECTED_ABSENT
+
+    def confirm_present(self, instance_id: str) -> None:
+        """Restore a suspected- or confirmed-absent instance to PRESENT.
+
+        If the instance was CONFIRMED_ABSENT (removed from the graph), it is
+        re-added as an isolated node; call add_instance_relation() to restore
+        any edges that were lost.
+        """
+        if instance_id not in self._instances:
+            raise ValueError(f"Instance '{instance_id}' not in InstanceKnowledgeBase.")
+        self._instances[instance_id].presence_state = PresenceState.PRESENT
+        if instance_id not in self._graph:
+            self._graph.add_node(instance_id)
+
+    def confirm_absent(self, instance_id: str) -> None:
+        """Mark instance as CONFIRMED_ABSENT.
+
+        Removes the node from the relational graph (no spreading activation),
+        but keeps the InstanceConcept in the dict for history and re-discovery.
+        """
+        if instance_id not in self._instances:
+            raise ValueError(f"Instance '{instance_id}' not in InstanceKnowledgeBase.")
+        self._instances[instance_id].presence_state = PresenceState.CONFIRMED_ABSENT
+        if instance_id in self._graph:
+            self._graph.remove_node(instance_id)
+
+    def active_instance_ids(self) -> list[str]:
+        """Return IDs of PRESENT and SUSPECTED_ABSENT instances only."""
+        return [
+            iid for iid, inst in self._instances.items()
+            if inst.presence_state != PresenceState.CONFIRMED_ABSENT
+        ]
+
+    # ------------------------------------------------------------------
     # Attention computation
     # ------------------------------------------------------------------
 
@@ -132,12 +178,18 @@ class InstanceKnowledgeBase:
         Returns:
             Dict mapping instance concept_id -> attention value in [0, 1].
         """
-        # Identify seed instances (those whose class has non-zero attention)
-        seed_attention: dict[str, float] = {
-            iid: class_attention[inst.class_id]
-            for iid, inst in self._instances.items()
-            if class_attention.get(inst.class_id, 0.0) > 0.0
-        }
+        # Only active instances (PRESENT + SUSPECTED_ABSENT) participate.
+        # CONFIRMED_ABSENT instances are excluded from attention entirely.
+        active = self.active_instance_ids()
+
+        # Identify seed instances (active, whose ANY class has non-zero attention).
+        # Multi-class instances take the max attention across all their memberships.
+        seed_attention: dict[str, float] = {}
+        for iid in active:
+            inst = self._instances[iid]
+            a = max((class_attention.get(c, 0.0) for c in inst.all_class_ids), default=0.0)
+            if a > 0.0:
+                seed_attention[iid] = a
 
         # Spreading activation through instance graph from each seed
         # relational_boost[i] = max contribution from any seed at d > 0
@@ -145,7 +197,6 @@ class InstanceKnowledgeBase:
 
         for seed_id, seed_a in seed_attention.items():
             if seed_id not in self._graph or self._graph.degree(seed_id) == 0:
-                # Isolated instance - no outgoing relations, no relational spread
                 continue
             distances = nx.single_source_dijkstra_path_length(
                 self._graph, seed_id, cutoff=max_distance, weight='weight'
@@ -156,10 +207,12 @@ class InstanceKnowledgeBase:
                 contrib = seed_a * ((1.0 - alpha) ** d if use_spreading_activation else 1.0)
                 relational_boost[iid] = max(relational_boost.get(iid, 0.0), contrib)
 
-        # Combine channels
+        # Combine channels — active instances only.
+        # Multi-class instances inherit the max attention across all their class memberships.
         result: dict[str, float] = {}
-        for iid, inst in self._instances.items():
-            base = class_attention.get(inst.class_id, 0.0)
+        for iid in active:
+            inst = self._instances[iid]
+            base = max((class_attention.get(c, 0.0) for c in inst.all_class_ids), default=0.0)
             boost = relational_boost.get(iid, 0.0) * instance_relational_weight
             result[iid] = min(1.0, base + boost)
 
@@ -204,6 +257,8 @@ class InstanceKnowledgeBase:
         if not apply_drift:
             return
         for instance in self._instances.values():
+            if instance.presence_state == PresenceState.CONFIRMED_ABSENT:
+                continue  # no longer in the world; don't accumulate drift
             instance.epistemic_error = min(1.0,
                 instance.epistemic_error + instance.decay_rate * dt
             )
@@ -219,9 +274,9 @@ class InstanceKnowledgeBase:
         return list(self._instances.keys())
 
     def instances_of_class(self, class_id: str) -> list[str]:
-        """Return all instance IDs whose class_id matches the given class."""
+        """Return all instance IDs that belong to the given class (any membership slot)."""
         return [iid for iid, inst in self._instances.items()
-                if inst.class_id == class_id]
+                if class_id in inst.all_class_ids]
 
     def relational_edges(self) -> list[tuple[str, str, float, str | None]]:
         """Return all relational edges as (id_a, id_b, weight, relation_type) tuples."""

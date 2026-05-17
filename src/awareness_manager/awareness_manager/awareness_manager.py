@@ -1,6 +1,7 @@
 import math
 from typing import TYPE_CHECKING
 
+from awareness_manager.concept import InstanceConcept, PresenceState
 from awareness_manager.feature_config import FeatureConfig
 from awareness_manager.knowledge_base import KnowledgeBase
 
@@ -80,6 +81,7 @@ class AwarenessManager:
         instance_relational_weight: float = 0.3,
         relational_spike_factor: float = 0.5,
         certainty_threshold: float = 0.0,
+        suspected_absent_priority_scale: float = 0.5,
         feature_config: FeatureConfig | None = None,
     ) -> None:
         """
@@ -121,6 +123,10 @@ class AwarenessManager:
                                        Default 0.0 disables the gate (matches
                                        existing behaviour: only E=0 concepts, i.e.
                                        task nodes, are skipped).
+            suspected_absent_priority_scale: Priority multiplier applied to
+                                       SUSPECTED_ABSENT instances (default 0.5).
+                                       Set to 1.0 to schedule them at full priority,
+                                       or 0.0 to exclude them from the schedule.
             feature_config:            Which of the five grounding formulas to
                                        activate. None (default) enables all formulas,
                                        preserving existing behaviour. Use
@@ -142,6 +148,7 @@ class AwarenessManager:
         self._instance_relational_weight = instance_relational_weight
         self._relational_spike_factor = relational_spike_factor
         self._certainty_threshold = certainty_threshold
+        self._suspected_absent_priority_scale = suspected_absent_priority_scale
         self._fc = feature_config if feature_config is not None else FeatureConfig()
         self._attention: dict[str, float] = {}
 
@@ -276,6 +283,7 @@ class AwarenessManager:
         self._kb.tick(dt)
         if self._instance_kb is not None:
             self._instance_kb.tick(dt)
+            self._kb.update_derived_class_errors(self._instance_kb)
         self._advance_mission_queue(dt)
         self._recompute_attention()
         return self._top_n()
@@ -490,11 +498,12 @@ class AwarenessManager:
             for cid in self._kb.concept_ids()
         }
         if self._instance_kb is not None:
-            for iid in self._instance_kb.instance_ids():
-                result[iid] = _priority(
-                    self._instance_kb.get_instance(iid).epistemic_error,
-                    self._attention.get(iid, 0.0),
-                )
+            for iid in self._instance_kb.active_instance_ids():
+                inst = self._instance_kb.get_instance(iid)
+                p = _priority(inst.epistemic_error, self._attention.get(iid, 0.0))
+                if inst.presence_state == PresenceState.SUSPECTED_ABSENT:
+                    p *= self._suspected_absent_priority_scale
+                result[iid] = p
         return result
 
     def attention(self) -> dict[str, float]:
@@ -532,6 +541,31 @@ class AwarenessManager:
     def instance_kb(self) -> 'InstanceKnowledgeBase | None':
         """The attached InstanceKnowledgeBase, or None if not set."""
         return self._instance_kb
+
+    # ------------------------------------------------------------------
+    # Runtime instance management
+    # ------------------------------------------------------------------
+
+    def _require_instance_kb(self) -> 'InstanceKnowledgeBase':
+        if self._instance_kb is None:
+            raise RuntimeError("No InstanceKnowledgeBase attached to this AwarenessManager.")
+        return self._instance_kb
+
+    def add_instance(self, instance: InstanceConcept) -> None:
+        """Add a new instance at runtime (e.g. discovered by perception)."""
+        self._require_instance_kb().add_instance(instance)
+
+    def mark_suspected_absent(self, instance_id: str) -> None:
+        """Mark an instance as SUSPECTED_ABSENT (scheduled at reduced priority)."""
+        self._require_instance_kb().mark_suspected_absent(instance_id)
+
+    def confirm_present(self, instance_id: str) -> None:
+        """Restore a suspected- or confirmed-absent instance to PRESENT."""
+        self._require_instance_kb().confirm_present(instance_id)
+
+    def confirm_absent(self, instance_id: str) -> None:
+        """Mark an instance as CONFIRMED_ABSENT (removed from scheduling)."""
+        self._require_instance_kb().confirm_absent(instance_id)
 
     @property
     def kb(self) -> KnowledgeBase:
@@ -582,6 +616,7 @@ class AwarenessManager:
             "lambda_horizon": self._lambda_horizon,
             "memory_budget": self._memory_budget,
             "instance_relational_weight": self._instance_relational_weight,
+            "suspected_absent_priority_scale": self._suspected_absent_priority_scale,
             "feature_config": {
                 "f1": self._fc.use_f1_spreading_activation,
                 "f2": self._fc.use_f2_anticipatory_horizon,
@@ -672,10 +707,10 @@ class AwarenessManager:
             )
             # Relational channel = boost above the class-gate baseline.
             # base = total class attention (F1 + F2) inherited by this instance.
-            for iid in self._instance_kb.instance_ids():
+            for iid in self._instance_kb.active_instance_ids():
                 inst = self._instance_kb.get_instance(iid)
-                base = combined.get(inst.class_id, 0.0)
-                relational_attn[iid] = max(0.0, instance_attn[iid] - base)
+                base = max((combined.get(c, 0.0) for c in inst.all_class_ids), default=0.0)
+                relational_attn[iid] = max(0.0, instance_attn.get(iid, 0.0) - base)
             combined.update(instance_attn)
 
         # --- Channel 3: surprise - violation boosts (Perceptual Prediction Error) ---
@@ -706,5 +741,15 @@ class AwarenessManager:
         # Zero-priority items (task nodes, or E ≤ certainty_threshold) are never
         # worth refreshing - task nodes have decay_rate=0 so E stays 0 and
         # querying them is wasteful; gated concepts are already sufficiently known.
+        #
+        # Derived-mode class concepts are also excluded: their epistemic error is
+        # read-only (recomputed from instance E values by update_derived_class_errors),
+        # so calling observe() on them is a no-op that wastes budget capacity.
+        # Instances should receive the full budget instead.
         positive = {k: v for k, v in p.items() if v > 0.0}
-        return sorted(positive, key=positive.__getitem__, reverse=True)[: self._budget]
+        schedulable = {
+            k: v for k, v in positive.items()
+            if k not in self._kb.concept_ids()  # instance IDs always pass through
+            or self._kb.get_concept(k).class_e_mode != 'derived'
+        }
+        return sorted(schedulable, key=schedulable.__getitem__, reverse=True)[: self._budget]

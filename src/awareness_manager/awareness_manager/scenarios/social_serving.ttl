@@ -1,0 +1,351 @@
+@prefix am: <http://coresense.eu/awareness/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# ============================================================
+# Social Serving Scenario Ontology
+# CoreSense — robot serving drinks to 10 people at a social event
+#
+# Designed to push the AM system to its limits:
+#   - Multi-class people (adult+VIP) boost attention from both classes
+#   - Runtime instance churn: drinks taken by others, people arrive/leave
+#   - Prediction error: robot has stale belief a drink exists but it's gone
+#   - Performance metric: total accumulated person-seconds without drinks
+#
+# Decay rates (δ, s⁻¹):
+#   0.0   task nodes         — abstract goals, no drift
+#   0.005 restock_zone       — stable location, rarely changes
+#   0.01  table_area         — seating area, people cluster here
+#   0.04  person classes     — people move, finish drinks, leave; state changes on ~25s timescale
+#   0.05  drink classes      — bottles/glasses can disappear on ~20s timescale
+# ============================================================
+
+
+# --- Class-level task ---
+
+am:serve_drinks a am:Concept ;
+    am:conceptId "serve_drinks" ;
+    am:conceptType "task" ;
+    am:decayRate "0.0"^^xsd:double .
+
+
+# --- Person classes (derived from person instances) ---
+
+am:child a am:Concept ;
+    am:conceptId "child" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:adult a am:Concept ;
+    am:conceptId "adult" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:VIP a am:Concept ;
+    am:conceptId "VIP" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+
+# --- Drink classes (derived from drink container instances) ---
+
+am:juice a am:Concept ;
+    am:conceptId "juice" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:cola a am:Concept ;
+    am:conceptId "cola" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:beer a am:Concept ;
+    am:conceptId "beer" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:wine a am:Concept ;
+    am:conceptId "wine" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:champagne a am:Concept ;
+    am:conceptId "champagne" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+
+# --- Location concepts (standalone) ---
+
+am:restock_zone a am:Concept ;
+    am:conceptId "restock_zone" ;
+    am:conceptType "location" ;
+    am:decayRate "0.005"^^xsd:double .
+
+am:table_area a am:Concept ;
+    am:conceptId "table_area" ;
+    am:conceptType "location" ;
+    am:decayRate "0.01"^^xsd:double .
+
+
+# --- Semantic edges ---
+
+# Task → person classes (knowing who needs serving is directly relevant)
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:child ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:adult ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:VIP ; am:weight "1.0"^^xsd:double .
+
+# Task → drink classes (knowing stock availability is directly relevant)
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:juice ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:cola ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:beer ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:wine ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:champagne ; am:weight "1.0"^^xsd:double .
+
+# Task → locations (less direct)
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:restock_zone ; am:weight "2.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:table_area ; am:weight "2.0"^^xsd:double .
+
+# Person class → drink preference edges (creates 2-hop paths via F1/F2)
+[] a am:SemanticEdge ;
+   am:source am:child ; am:target am:juice ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:child ; am:target am:cola ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:adult ; am:target am:beer ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:adult ; am:target am:wine ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:VIP ; am:target am:champagne ; am:weight "1.0"^^xsd:double .
+
+# VIPs also drink wine (second preference, slightly higher weight = less tight coupling)
+[] a am:SemanticEdge ;
+   am:source am:VIP ; am:target am:wine ; am:weight "1.5"^^xsd:double .
+
+# Location structural edges
+[] a am:SemanticEdge ;
+   am:source am:table_area ; am:target am:child ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:table_area ; am:target am:adult ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:table_area ; am:target am:VIP ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:restock_zone ; am:target am:juice ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:restock_zone ; am:target am:cola ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:restock_zone ; am:target am:beer ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:restock_zone ; am:target am:wine ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:restock_zone ; am:target am:champagne ; am:weight "1.0"^^xsd:double .
+
+
+# --- Person instances ---
+# 3 children, 3 single-class adults, 2 VIPs, 2 adult+VIP (multi-class)
+
+am:person_01 a am:InstanceConcept ;
+    am:conceptId "person_01" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "child" .
+
+am:person_02 a am:InstanceConcept ;
+    am:conceptId "person_02" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "child" .
+
+am:person_03 a am:InstanceConcept ;
+    am:conceptId "person_03" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "child" .
+
+am:person_04 a am:InstanceConcept ;
+    am:conceptId "person_04" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "adult" .
+
+am:person_05 a am:InstanceConcept ;
+    am:conceptId "person_05" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "adult" .
+
+am:person_06 a am:InstanceConcept ;
+    am:conceptId "person_06" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "adult" .
+
+am:person_07 a am:InstanceConcept ;
+    am:conceptId "person_07" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "VIP" .
+
+am:person_08 a am:InstanceConcept ;
+    am:conceptId "person_08" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ; am:classId "VIP" .
+
+# Multi-class: adult AND VIP — gets attention from both class channels
+am:person_09 a am:InstanceConcept ;
+    am:conceptId "person_09" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ;
+    am:classId "adult" ;
+    am:classId "VIP" .
+
+am:person_10 a am:InstanceConcept ;
+    am:conceptId "person_10" ; am:conceptType "object" ;
+    am:decayRate "0.04"^^xsd:double ;
+    am:classId "adult" ;
+    am:classId "VIP" .
+
+
+# --- Drink container instances ---
+
+am:juice_01 a am:InstanceConcept ;
+    am:conceptId "juice_01" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "juice" .
+
+am:juice_02 a am:InstanceConcept ;
+    am:conceptId "juice_02" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "juice" .
+
+am:cola_01 a am:InstanceConcept ;
+    am:conceptId "cola_01" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "cola" .
+
+am:beer_01 a am:InstanceConcept ;
+    am:conceptId "beer_01" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "beer" .
+
+am:beer_02 a am:InstanceConcept ;
+    am:conceptId "beer_02" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "beer" .
+
+am:beer_03 a am:InstanceConcept ;
+    am:conceptId "beer_03" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "beer" .
+
+am:wine_01 a am:InstanceConcept ;
+    am:conceptId "wine_01" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "wine" .
+
+am:wine_02 a am:InstanceConcept ;
+    am:conceptId "wine_02" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "wine" .
+
+am:champagne_01 a am:InstanceConcept ;
+    am:conceptId "champagne_01" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "champagne" .
+
+am:champagne_02 a am:InstanceConcept ;
+    am:conceptId "champagne_02" ; am:conceptType "object" ;
+    am:decayRate "0.05"^^xsd:double ; am:classId "champagne" .
+
+
+# --- Instance relational edges ---
+# Sparse proximity: drinks cluster near restock zone, people cluster by table.
+# These enable the relational boost channel so the AM can locate drinks from
+# adjacent people or vice-versa without needing a semantic class link.
+
+# Children at the same table
+[] a am:InstanceEdge ;
+   am:source am:person_01 ; am:target am:person_02 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:person_02 ; am:target am:person_03 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+# Adults at the bar area
+[] a am:InstanceEdge ;
+   am:source am:person_04 ; am:target am:person_05 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:person_05 ; am:target am:person_06 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+# VIPs together at the reserved table
+[] a am:InstanceEdge ;
+   am:source am:person_07 ; am:target am:person_08 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+# Multi-class adults/VIPs near the VIP table
+[] a am:InstanceEdge ;
+   am:source am:person_09 ; am:target am:person_07 ;
+   am:weight "1.5"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:person_10 ; am:target am:person_08 ;
+   am:weight "1.5"^^xsd:double ; am:relationType "locatedNear" .
+
+# Drink containers clustered together (robot can find nearby drinks)
+[] a am:InstanceEdge ;
+   am:source am:juice_01 ; am:target am:juice_02 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:juice_01 ; am:target am:cola_01 ;
+   am:weight "1.5"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:beer_01 ; am:target am:beer_02 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:beer_02 ; am:target am:beer_03 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:wine_01 ; am:target am:wine_02 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:wine_01 ; am:target am:champagne_01 ;
+   am:weight "1.5"^^xsd:double ; am:relationType "locatedNear" .
+
+[] a am:InstanceEdge ;
+   am:source am:champagne_01 ; am:target am:champagne_02 ;
+   am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .

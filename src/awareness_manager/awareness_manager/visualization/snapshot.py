@@ -27,9 +27,67 @@ from awareness_manager.baselines.strategy import AttentionStrategy
 # Canvas coordinate space for preset layout positions
 _CANVAS_W = 1000.0
 _CANVAS_H = 750.0
-_SCALE = 420.0
 _ORBIT_RADIUS_BASE = 68.0
 _ORBIT_RADIUS_STEP = 18.0  # extra radius per instance beyond 2
+# Margin reserved on each edge for instance orbits (class nodes must stay inside)
+_LAYOUT_MARGIN = _ORBIT_RADIUS_BASE + _ORBIT_RADIUS_STEP * 3 + 20  # ≈ 122 px
+
+
+def _fit_to_canvas(pos_raw: dict) -> dict[str, dict]:
+    """
+    Scale and centre spring-layout positions to fill the usable canvas area.
+
+    spring_layout returns coordinates in roughly [-1, 1].  The naive approach
+    of multiplying by a fixed scale fails when the canvas is not square (H=750
+    vs W=1000) or when the graph's bounding box is smaller than ±1 — nodes end
+    up clipped off-screen and Cytoscape auto-fits everything into a tiny pile.
+
+    This function:
+      1. Measures the actual bounding box of the raw positions.
+      2. Computes a uniform scale so the bounding box fills the effective canvas
+         area (canvas minus _LAYOUT_MARGIN on all sides, reserving room for
+         orbiting instance nodes).
+      3. Centres the scaled positions on the canvas.
+
+    The effective canvas for class nodes is
+      x ∈ [_LAYOUT_MARGIN, _CANVAS_W - _LAYOUT_MARGIN]
+      y ∈ [_LAYOUT_MARGIN, _CANVAS_H - _LAYOUT_MARGIN]
+    so instance orbits stay fully visible.
+    """
+    if not pos_raw:
+        return {}
+
+    xs = [p[0] for p in pos_raw.values()]
+    ys = [p[1] for p in pos_raw.values()]
+    x_range = max(xs) - min(xs)
+    y_range = max(ys) - min(ys)
+
+    eff_w = _CANVAS_W - 2 * _LAYOUT_MARGIN
+    eff_h = _CANVAS_H - 2 * _LAYOUT_MARGIN
+
+    # Uniform scale: fit the larger dimension; fall back to eff_w if graph is a point
+    if x_range < 1e-6 and y_range < 1e-6:
+        scale = eff_w
+    elif x_range < 1e-6:
+        scale = eff_h / y_range
+    elif y_range < 1e-6:
+        scale = eff_w / x_range
+    else:
+        scale = min(eff_w / x_range, eff_h / y_range)
+
+    # Centre of the raw bounding box → canvas centre
+    raw_cx = (min(xs) + max(xs)) / 2.0
+    raw_cy = (min(ys) + max(ys)) / 2.0
+    canvas_cx = _CANVAS_W / 2.0
+    canvas_cy = _CANVAS_H / 2.0
+
+    return {
+        cid: {
+            "x": float(round((x - raw_cx) * scale + canvas_cx, 2)),
+            "y": float(round((y - raw_cy) * scale + canvas_cy, 2)),
+        }
+        for cid, (x, y) in pos_raw.items()
+    }
 
 # Hue for each dominant activation channel (used in _channel_color and in the UI legend)
 CHANNEL_COLORS = {
@@ -103,9 +161,6 @@ def compute_positions_from_structure(structure: dict) -> dict[str, dict]:
     topology - uses the same spring_layout seed and orbital placement logic.
     Used by ReplayReader when positions are not stored in the trace.
     """
-    cx_canvas = _CANVAS_W / 2
-    cy_canvas = _CANVAS_H / 2
-
     G = nx.Graph()
     for cls in structure["classes"]:
         G.add_node(cls["id"])
@@ -113,13 +168,7 @@ def compute_positions_from_structure(structure: dict) -> dict[str, dict]:
         G.add_edge(id_a, id_b, weight=weight)
 
     pos_raw = nx.spring_layout(G, seed=42)
-
-    positions: dict[str, dict] = {}
-    for cid, (x, y) in pos_raw.items():
-        positions[cid] = {
-            "x": float(round(x * _SCALE + cx_canvas, 2)),
-            "y": float(round(y * _SCALE + cy_canvas, 2)),
-        }
+    positions: dict[str, dict] = _fit_to_canvas(pos_raw)
 
     class_instances: dict[str, list[str]] = defaultdict(list)
     for inst in structure.get("instances", []):
@@ -154,8 +203,6 @@ def compute_positions(am: AttentionStrategy) -> dict[str, dict]:
     Returns {node_id: {"x": float, "y": float}}.
     """
     kb = am.kb
-    cx_canvas = _CANVAS_W / 2
-    cy_canvas = _CANVAS_H / 2
 
     G = nx.Graph()
     G.add_nodes_from(kb.concept_ids())
@@ -163,13 +210,7 @@ def compute_positions(am: AttentionStrategy) -> dict[str, dict]:
         G.add_edge(id_a, id_b, weight=weight)
 
     pos_raw = nx.spring_layout(G, seed=42)
-
-    positions: dict[str, dict] = {}
-    for cid, (x, y) in pos_raw.items():
-        positions[cid] = {
-            "x": float(round(x * _SCALE + cx_canvas, 2)),
-            "y": float(round(y * _SCALE + cy_canvas, 2)),
-        }
+    positions: dict[str, dict] = _fit_to_canvas(pos_raw)
 
     if am.instance_kb is not None:
         class_instances: dict[str, list[str]] = defaultdict(list)

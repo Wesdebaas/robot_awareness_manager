@@ -1,10 +1,11 @@
 """
-Awareness Manager dashboard - PV inspection scenario (CoreSense D7.1).
+Awareness Manager dashboard.
 
 Usage (live mode):
     python src/awareness_manager/demos/run_dashboard.py
     python src/awareness_manager/demos/run_dashboard.py --strategy always_on
     python src/awareness_manager/demos/run_dashboard.py --strategy reactive
+    python src/awareness_manager/demos/run_dashboard.py --scenario social_serving
     python src/awareness_manager/demos/run_dashboard.py --log
     python src/awareness_manager/demos/run_dashboard.py --log --log-path traces/run_001 --log-rate 2
 
@@ -41,9 +42,8 @@ Flags:
 
 import argparse
 import datetime
+import random
 from pathlib import Path
-
-SCENARIO = "pv_inspection"
 
 
 def _build_am(args: argparse.Namespace):
@@ -105,6 +105,94 @@ def _build_reactive(args: argparse.Namespace):
     )
     strategy.queue_goal('emergency_landing', eta=30.0, level='global')
     return strategy, True  # observe_top=True - runner must call observe(); round-robin is selection only
+
+
+# ===========================================================================
+# Social serving scenario builders
+# ===========================================================================
+
+_DRINK_CLASSES = {'juice', 'cola', 'beer', 'wine', 'champagne'}
+_DISAPPEAR_RATE = 0.003  # per drink per second → ~1 disappearance every 33s
+
+
+def _make_social_serving_tick_hook(seed: int = 42):
+    """
+    Returns a tick_hook that randomly removes drinks from the IKB.
+
+    Drink disappearances are irreversible during a dashboard run — the robot's
+    epistemic state degrades for gone drinks and the class E (derived) adjusts
+    to reflect only remaining instances.  Visual cue: confirmed-absent drink
+    nodes dim to A=0 and stop being scheduled.
+    """
+    from awareness_manager.concept import PresenceState
+
+    rng = random.Random(seed)
+    dt = 0.1  # runner dt
+
+    def _hook(strategy, elapsed: float) -> None:
+        ikb = strategy.instance_kb
+        if ikb is None:
+            return
+        for iid in list(ikb.active_instance_ids()):
+            inst = ikb.get_instance(iid)
+            if not any(c in _DRINK_CLASSES for c in inst.all_class_ids):
+                continue
+            if rng.random() < _DISAPPEAR_RATE * dt:
+                if inst.presence_state != PresenceState.CONFIRMED_ABSENT:
+                    ikb.mark_suspected_absent(iid)
+                    ikb.confirm_absent(iid)
+
+    return _hook
+
+
+def _build_social_serving_am(args):
+    from awareness_manager.awareness_manager import AwarenessManager
+    from awareness_manager.scenarios.social_serving import (
+        build_social_serving_instance_kb,
+        build_social_serving_kb,
+    )
+
+    kb  = build_social_serving_kb()
+    ikb = build_social_serving_instance_kb()
+    am  = AwarenessManager(
+        kb, goal_id='serve_drinks', alpha=0.5,
+        budget=3, observation_interval=5.0,
+        instance_kb=ikb,
+        instance_relational_weight=0.3,
+    )
+    return am, True, _make_social_serving_tick_hook()
+
+
+def _build_social_serving_always_on(args):
+    from awareness_manager.baselines.always_on import AlwaysOnBaseline
+    from awareness_manager.scenarios.social_serving import (
+        build_social_serving_instance_kb,
+        build_social_serving_kb,
+    )
+
+    kb  = build_social_serving_kb()
+    ikb = build_social_serving_instance_kb()
+    strategy = AlwaysOnBaseline(
+        kb, goal_id='serve_drinks',
+        observation_interval=5.0, ikb=ikb,
+    )
+    return strategy, False, _make_social_serving_tick_hook()
+
+
+def _build_social_serving_reactive(args):
+    from awareness_manager.baselines.reactive import ReactiveBaseline
+    from awareness_manager.scenarios.social_serving import (
+        build_social_serving_instance_kb,
+        build_social_serving_kb,
+    )
+
+    kb  = build_social_serving_kb()
+    ikb = build_social_serving_instance_kb()
+    strategy = ReactiveBaseline(
+        kb, goal_id='serve_drinks',
+        budget=3, observation_interval=5.0, ikb=ikb,
+    )
+    return strategy, True, _make_social_serving_tick_hook()
 
 
 def _build_channel_demo():
@@ -170,13 +258,28 @@ def _build_channel_demo():
     return am, True, _tick_hook  # strategy, observe_top, tick_hook
 
 
-def _build_live(args: argparse.Namespace):
+def _build_live(args: argparse.Namespace) -> tuple:
     from awareness_manager.visualization.runner import SimulationRunner
 
     tick_hook = None
+    scenario = getattr(args, 'scenario', 'pv_inspection') or 'pv_inspection'
+
     if args.demo:
         strategy, observe_top, tick_hook = _build_channel_demo()
         strategy_name = "channel_demo"
+    elif scenario == 'social_serving':
+        strategy_name = args.strategy or "awareness_manager"
+        builders = {
+            "awareness_manager": _build_social_serving_am,
+            "always_on":         _build_social_serving_always_on,
+            "reactive":          _build_social_serving_reactive,
+        }
+        if strategy_name not in builders:
+            raise SystemExit(
+                f"Unknown strategy '{strategy_name}'. "
+                f"Choose from: {', '.join(builders)}"
+            )
+        strategy, observe_top, tick_hook = builders[strategy_name](args)
     else:
         strategy_name = args.strategy or "awareness_manager"
         builders = {
@@ -191,7 +294,7 @@ def _build_live(args: argparse.Namespace):
             )
         strategy, observe_top = builders[strategy_name](args)
 
-    print(f"  Strategy: {strategy_name}  observe_top={observe_top}")
+    print(f"  Strategy: {strategy_name}  scenario={scenario}  observe_top={observe_top}")
 
     logger = None
     if args.log:
@@ -201,7 +304,7 @@ def _build_live(args: argparse.Namespace):
                     else Path("traces") / f"{strategy_name}_{ts}")
         logger = TraceLogger(
             strategy,
-            scenario=SCENARIO,
+            scenario=scenario,
             output_dir=log_path,
             dt=0.1,
             sample_rate=args.log_rate,
@@ -214,7 +317,7 @@ def _build_live(args: argparse.Namespace):
         history_maxlen=300, logger=logger, tick_hook=tick_hook,
         observe_interval=2.0,
     )
-    return runner
+    return scenario, runner
 
 
 def _build_replay(path_str: str):
@@ -231,6 +334,11 @@ def _build_replay(path_str: str):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Awareness Manager Dashboard")
+    parser.add_argument(
+        "--scenario", metavar="NAME", default="pv_inspection",
+        choices=["pv_inspection", "social_serving"],
+        help="Scenario to run: pv_inspection (default) or social_serving",
+    )
     parser.add_argument(
         "--strategy", metavar="NAME", default="awareness_manager",
         help="Live-mode strategy: awareness_manager (default), always_on, reactive",
@@ -260,22 +368,25 @@ def main() -> None:
 
     print("=" * 60)
     source_b = None
+    scenario = args.scenario
     if args.compare:
         print("  Robot Awareness Dashboard - Compare mode")
         source = _build_replay(args.replay)
         source_b = _build_replay(args.compare)
+        scenario = source.meta.get("scenario", scenario)
     elif args.replay:
         print("  Robot Awareness Dashboard - Replay mode")
         source = _build_replay(args.replay)
+        scenario = source.meta.get("scenario", scenario)
     else:
-        label = "channel demo" if args.demo else SCENARIO
+        label = "channel demo" if args.demo else scenario
         print(f"  Robot Awareness Dashboard - {label} (live)")
-        source = _build_live(args)
+        scenario, source = _build_live(args)
     print(f"  Open http://localhost:{args.port} in your browser")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
 
-    run(source, source_b=source_b, scenario=SCENARIO,
+    run(source, source_b=source_b, scenario=scenario,
         debug=args.debug, port=args.port)
 
 

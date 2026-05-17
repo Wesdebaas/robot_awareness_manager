@@ -156,7 +156,9 @@ class ReactiveBaseline:
         if self._instance_kb is not None:
             for iid in self._instance_kb.instance_ids():
                 inst = self._instance_kb.get_instance(iid)
-                self._attention[iid] = 0.5 if inst.class_id in active_classes else 0.0
+                self._attention[iid] = (
+                    0.5 if any(c in active_classes for c in inst.all_class_ids) else 0.0
+                )
 
         # Schedulable = active concepts with decay_rate > 0 (skip task nodes,
         # which have decay_rate=0 and are never worth refreshing).
