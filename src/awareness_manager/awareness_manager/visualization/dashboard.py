@@ -179,7 +179,7 @@ STYLESHEET = [
             "border-style": "solid",
         },
     },
-    # ── Semantic edges (class–class) ──────────────────────────────────────
+    # ── Semantic edges (class-class) ──────────────────────────────────────
     {
         "selector": "edge[edge_type='semantic']",
         "style": {
@@ -199,7 +199,7 @@ STYLESHEET = [
             "text-background-padding": "2px",
         },
     },
-    # ── Relational edges (instance–instance) ──────────────────────────────
+    # ── Relational edges (instance-instance) ──────────────────────────────
     {
         "selector": "edge[edge_type='relational']",
         "style": {
@@ -242,9 +242,9 @@ _LEGEND = html.Div(
     },
     children=[
         html.Div([html.Span("── ─ ─  ", style={"color": _EDGE_SEM}),
-                  html.Span("semantic edge (class–class)", style={"color": _DIM})]),
+                  html.Span("semantic edge (class-class)", style={"color": _DIM})]),
         html.Div([html.Span("────  ▶ ", style={"color": _EDGE_REL}),
-                  html.Span("relational edge (instance–instance)", style={"color": _DIM})]),
+                  html.Span("relational edge (instance-instance)", style={"color": _DIM})]),
         html.Div([html.Span("◉  ", style={"color": _COL_MISSION}),
                   html.Span("blue = mission-driven (F1 + F2 goal)", style={"color": _DIM})]),
         html.Div([html.Span("◉  ", style={"color": _COL_RELATIONAL}),
@@ -571,10 +571,10 @@ def _graph_pane() -> html.Div:
             cyto.Cytoscape(
                 id="awareness-graph",
                 elements=[],
-                layout={"name": "preset"},
+                layout={"name": "preset", "fit": True},
                 style={"width": "100%", "height": "100%", "background": _BG},
                 stylesheet=STYLESHEET,
-                minZoom=0.25,
+                minZoom=0.10,
                 maxZoom=3.5,
                 boxSelectionEnabled=False,
                 autoRefreshLayout=False,
@@ -858,7 +858,7 @@ def _build_compare_app(
                                 cyto.Cytoscape(
                                     id=f"awareness-graph-{side}",
                                     elements=[],
-                                    layout={"name": "preset"},
+                                    layout={"name": "preset", "fit": True},
                                     style={"width": "100%", "height": "100%",
                                            "background": _BG},
                                     stylesheet=STYLESHEET,
@@ -1514,6 +1514,31 @@ def build_app(source: 'SimulationRunner | ReplayReader',
 
     else:
         runner = source
+
+        controller_row = html.Div(
+            id="controller-row",
+            style={
+                "background": "#181828",
+                "padding": "5px 16px",
+                "display": "none",  # shown dynamically when controller_state present
+                "align-items": "center",
+                "gap": "10px",
+                "border-bottom": "1px solid #2a2a44",
+                "flex-shrink": "0",
+            },
+            children=[
+                html.Span("Controller:",
+                          style={"color": _DIM, "font-size": "10px",
+                                 "white-space": "nowrap"}),
+                html.Span(id="ctrl-state-badge",
+                          style={"font-size": "10px", "font-weight": "bold",
+                                 "font-family": "monospace", "white-space": "nowrap"}),
+                html.Span(id="ctrl-target-badge",
+                          style={"color": _DIM, "font-size": "10px",
+                                 "font-family": "monospace", "white-space": "nowrap"}),
+            ],
+        )
+
         app.layout = html.Div(
             style={"background": _BG, "color": _TEXT, "font-family": "monospace",
                    "height": "100vh", "display": "flex",
@@ -1521,6 +1546,7 @@ def build_app(source: 'SimulationRunner | ReplayReader',
             children=[
                 top_bar,
                 threshold_row,
+                controller_row,
                 html.Div(
                     style={"flex": "1", "display": "flex", "overflow": "hidden"},
                     children=[
@@ -1693,6 +1719,10 @@ def build_app(source: 'SimulationRunner | ReplayReader',
             Output("budget-bar-slot", "children"),
             Output("elapsed-label", "children"),
             Output("layout-initialized", "data"),
+            Output("controller-row", "style"),
+            Output("ctrl-state-badge", "children"),
+            Output("ctrl-state-badge", "style"),
+            Output("ctrl-target-badge", "children"),
             Input("update-interval", "n_intervals"),
             Input("threshold-slider", "value"),
             State("layout-initialized", "data"),
@@ -1708,6 +1738,29 @@ def build_app(source: 'SimulationRunner | ReplayReader',
             else:
                 sched_label = f"Scheduled: {n} / {b}"
                 bar = _budget_bar_html(n, b)
+
+            # Controller state panel (social_serving scenario with AMController hook)
+            cs = snap.get("controller_state")
+            if cs:
+                state_str  = cs.get("state", "monitoring")
+                target_str = cs.get("target")
+                row_style  = {
+                    "background": "#181828", "padding": "5px 16px",
+                    "display": "flex", "align-items": "center", "gap": "10px",
+                    "border-bottom": "1px solid #2a2a44", "flex-shrink": "0",
+                }
+                badge_color  = "#44cc88" if state_str == "monitoring" else "#f4944a"
+                badge_style  = {"color": badge_color, "font-size": "10px",
+                                "font-weight": "bold", "font-family": "monospace",
+                                "white-space": "nowrap"}
+                state_label  = state_str.upper()
+                target_label = f"→ {target_str}" if target_str else ""
+            else:
+                row_style    = {"display": "none"}
+                badge_style  = {}
+                state_label  = ""
+                target_label = ""
+
             return (
                 elements,
                 snap["goal_id"],
@@ -1716,6 +1769,10 @@ def build_app(source: 'SimulationRunner | ReplayReader',
                 bar,
                 f"t = {snap['elapsed']:.1f}s",
                 True,
+                row_style,
+                state_label,
+                badge_style,
+                target_label,
             )
 
         # ── Inspector (live) ──────────────────────────────────────────────

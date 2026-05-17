@@ -5,25 +5,36 @@
 # Social Serving Scenario Ontology
 # CoreSense — robot serving drinks to 10 people at a social event
 #
-# Designed to push the AM system to its limits:
+# Designed to exercise F6 (Spatial Opportunity Cost):
+#   - Two zones: table_area (people) and restock_zone (drinks)
+#   - Cross-zone travel is expensive → AM learns to batch observations
 #   - Multi-class people (adult+VIP) boost attention from both classes
-#   - Runtime instance churn: drinks taken by others, people arrive/leave
-#   - Prediction error: robot has stale belief a drink exists but it's gone
-#   - Performance metric: total accumulated person-seconds without drinks
+#   - Runtime instance churn: drinks taken by others, people finish drinks
+#   - Metric: total accumulated person-seconds without a drink
 #
 # Decay rates (δ, s⁻¹):
-#   0.0   task nodes         — abstract goals, no drift
-#   0.005 restock_zone       — stable location, rarely changes
-#   0.01  table_area         — seating area, people cluster here
-#   0.04  person classes     — people move, finish drinks, leave; state changes on ~25s timescale
-#   0.05  drink classes      — bottles/glasses can disappear on ~20s timescale
+#   0.0   task/class nodes  — abstract goals and derived classes, no drift
+#   0.005 restock_zone      — stable location, rarely changes
+#   0.01  table_area        — seating area, people cluster here
+#   0.04  person instances  — state changes (finish drink) on ~25s timescale
+#   0.05  drink instances   — bottles/glasses can disappear on ~20s timescale
+#
+# Observation costs (am:observationCost, seconds):
+#   2.0   person instances  — state assessment (has_drink, thirst level)
+#   0.5   drink instances   — quick visual stock check
+#   1.0   location concepts — area scan
+#   (class/task nodes: omitted → default 1.0, never scheduled)
+#
+# Zone assignment (am:zone):
+#   "table_area"   — person instances, table_area concept
+#   "restock_zone" — drink instances, restock_zone concept
 # ============================================================
 
 
-# --- Class-level task ---
+# --- Primary mission goal (always active) ---
 
-am:serve_drinks a am:Concept ;
-    am:conceptId "serve_drinks" ;
+am:serve_people_drinks a am:Concept ;
+    am:conceptId "serve_people_drinks" ;
     am:conceptType "task" ;
     am:decayRate "0.0"^^xsd:double .
 
@@ -48,6 +59,15 @@ am:adult a am:Concept ;
 
 am:VIP a am:Concept ;
     am:conceptId "VIP" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+# Generic person class — used by parameterised serve goals to keep person awareness.
+am:person a am:Concept ;
+    am:conceptId "person" ;
     am:conceptType "object" ;
     am:decayRate "0.0"^^xsd:double ;
     am:classEMode "derived" ;
@@ -98,55 +118,62 @@ am:champagne a am:Concept ;
     am:absentFallbackE "1.0"^^xsd:double .
 
 
-# --- Location concepts (standalone) ---
+# --- Location concepts ---
 
 am:restock_zone a am:Concept ;
     am:conceptId "restock_zone" ;
     am:conceptType "location" ;
-    am:decayRate "0.005"^^xsd:double .
+    am:decayRate "0.005"^^xsd:double ;
+    am:observationCost "1.0"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:table_area a am:Concept ;
     am:conceptId "table_area" ;
     am:conceptType "location" ;
-    am:decayRate "0.01"^^xsd:double .
+    am:decayRate "0.01"^^xsd:double ;
+    am:observationCost "1.0"^^xsd:double ;
+    am:zone "table_area" .
 
 
-# --- Semantic edges ---
+# --- Semantic edges from primary goal ---
 
-# Task → person classes (knowing who needs serving is directly relevant)
+# serve_people_drinks → person classes (all people need drinks)
 [] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:child ; am:weight "1.0"^^xsd:double .
-
-[] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:adult ; am:weight "1.0"^^xsd:double .
-
-[] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:VIP ; am:weight "1.0"^^xsd:double .
-
-# Task → drink classes (knowing stock availability is directly relevant)
-[] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:juice ; am:weight "1.0"^^xsd:double .
+   am:source am:serve_people_drinks ; am:target am:child ; am:weight "1.0"^^xsd:double .
 
 [] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:cola ; am:weight "1.0"^^xsd:double .
+   am:source am:serve_people_drinks ; am:target am:adult ; am:weight "1.0"^^xsd:double .
 
 [] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:beer ; am:weight "1.0"^^xsd:double .
+   am:source am:serve_people_drinks ; am:target am:VIP ; am:weight "1.0"^^xsd:double .
 
 [] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:wine ; am:weight "1.0"^^xsd:double .
+   am:source am:serve_people_drinks ; am:target am:person ; am:weight "1.0"^^xsd:double .
+
+# serve_people_drinks → drink classes (knowing stock is directly relevant)
+[] a am:SemanticEdge ;
+   am:source am:serve_people_drinks ; am:target am:juice ; am:weight "1.0"^^xsd:double .
 
 [] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:champagne ; am:weight "1.0"^^xsd:double .
-
-# Task → locations (less direct)
-[] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:restock_zone ; am:weight "2.0"^^xsd:double .
+   am:source am:serve_people_drinks ; am:target am:cola ; am:weight "1.0"^^xsd:double .
 
 [] a am:SemanticEdge ;
-   am:source am:serve_drinks ; am:target am:table_area ; am:weight "2.0"^^xsd:double .
+   am:source am:serve_people_drinks ; am:target am:beer ; am:weight "1.0"^^xsd:double .
 
-# Person class → drink preference edges (creates 2-hop paths via F1/F2)
+[] a am:SemanticEdge ;
+   am:source am:serve_people_drinks ; am:target am:wine ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_people_drinks ; am:target am:champagne ; am:weight "1.0"^^xsd:double .
+
+# serve_people_drinks → locations (less direct, higher weight)
+[] a am:SemanticEdge ;
+   am:source am:serve_people_drinks ; am:target am:restock_zone ; am:weight "2.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_people_drinks ; am:target am:table_area ; am:weight "2.0"^^xsd:double .
+
+# Person class → drink preference edges (2-hop paths via F1)
 [] a am:SemanticEdge ;
    am:source am:child ; am:target am:juice ; am:weight "1.0"^^xsd:double .
 
@@ -162,7 +189,6 @@ am:table_area a am:Concept ;
 [] a am:SemanticEdge ;
    am:source am:VIP ; am:target am:champagne ; am:weight "1.0"^^xsd:double .
 
-# VIPs also drink wine (second preference, slightly higher weight = less tight coupling)
 [] a am:SemanticEdge ;
    am:source am:VIP ; am:target am:wine ; am:weight "1.5"^^xsd:double .
 
@@ -193,101 +219,149 @@ am:table_area a am:Concept ;
 
 
 # --- Person instances ---
-# 3 children, 3 single-class adults, 2 VIPs, 2 adult+VIP (multi-class)
+# 3 children, 3 adults, 2 VIPs, 2 adult+VIP (multi-class)
+# All in zone "table_area", observation cost 2.0s (state assessment)
 
 am:person_01 a am:InstanceConcept ;
     am:conceptId "person_01" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "child" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "child" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_02 a am:InstanceConcept ;
     am:conceptId "person_02" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "child" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "child" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_03 a am:InstanceConcept ;
     am:conceptId "person_03" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "child" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "child" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_04 a am:InstanceConcept ;
     am:conceptId "person_04" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "adult" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "adult" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_05 a am:InstanceConcept ;
     am:conceptId "person_05" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "adult" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "adult" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_06 a am:InstanceConcept ;
     am:conceptId "person_06" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "adult" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "adult" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_07 a am:InstanceConcept ;
     am:conceptId "person_07" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "VIP" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "VIP" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_08 a am:InstanceConcept ;
     am:conceptId "person_08" ; am:conceptType "object" ;
-    am:decayRate "0.04"^^xsd:double ; am:classId "VIP" .
+    am:decayRate "0.04"^^xsd:double ; am:classId "VIP" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
-# Multi-class: adult AND VIP — gets attention from both class channels
 am:person_09 a am:InstanceConcept ;
     am:conceptId "person_09" ; am:conceptType "object" ;
     am:decayRate "0.04"^^xsd:double ;
     am:classId "adult" ;
-    am:classId "VIP" .
+    am:classId "VIP" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 am:person_10 a am:InstanceConcept ;
     am:conceptId "person_10" ; am:conceptType "object" ;
     am:decayRate "0.04"^^xsd:double ;
     am:classId "adult" ;
-    am:classId "VIP" .
+    am:classId "VIP" ;
+    am:classId "person" ;
+    am:observationCost "2.0"^^xsd:double ;
+    am:zone "table_area" .
 
 
 # --- Drink container instances ---
+# All in zone "restock_zone", observation cost 0.5s (quick visual check)
 
 am:juice_01 a am:InstanceConcept ;
     am:conceptId "juice_01" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "juice" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "juice" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:juice_02 a am:InstanceConcept ;
     am:conceptId "juice_02" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "juice" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "juice" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:cola_01 a am:InstanceConcept ;
     am:conceptId "cola_01" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "cola" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "cola" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:beer_01 a am:InstanceConcept ;
     am:conceptId "beer_01" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "beer" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "beer" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:beer_02 a am:InstanceConcept ;
     am:conceptId "beer_02" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "beer" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "beer" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:beer_03 a am:InstanceConcept ;
     am:conceptId "beer_03" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "beer" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "beer" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:wine_01 a am:InstanceConcept ;
     am:conceptId "wine_01" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "wine" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "wine" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:wine_02 a am:InstanceConcept ;
     am:conceptId "wine_02" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "wine" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "wine" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:champagne_01 a am:InstanceConcept ;
     am:conceptId "champagne_01" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "champagne" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "champagne" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 am:champagne_02 a am:InstanceConcept ;
     am:conceptId "champagne_02" ; am:conceptType "object" ;
-    am:decayRate "0.05"^^xsd:double ; am:classId "champagne" .
+    am:decayRate "0.05"^^xsd:double ; am:classId "champagne" ;
+    am:observationCost "0.5"^^xsd:double ;
+    am:zone "restock_zone" .
 
 
 # --- Instance relational edges ---
-# Sparse proximity: drinks cluster near restock zone, people cluster by table.
-# These enable the relational boost channel so the AM can locate drinks from
-# adjacent people or vice-versa without needing a semantic class link.
 
 # Children at the same table
 [] a am:InstanceEdge ;
@@ -321,7 +395,7 @@ am:champagne_02 a am:InstanceConcept ;
    am:source am:person_10 ; am:target am:person_08 ;
    am:weight "1.5"^^xsd:double ; am:relationType "locatedNear" .
 
-# Drink containers clustered together (robot can find nearby drinks)
+# Drink containers clustered together at the restock zone
 [] a am:InstanceEdge ;
    am:source am:juice_01 ; am:target am:juice_02 ;
    am:weight "1.0"^^xsd:double ; am:relationType "locatedNear" .

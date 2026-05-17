@@ -118,13 +118,17 @@ class SimulationRunner:
         copy the snapshot dict; does not hold it while the callback renders.
         """
         with self._lock:
-            return get_snapshot(
+            snap = get_snapshot(
                 self._am,
                 self._last_observed,
                 self._elapsed,
                 self._positions,
                 threshold=threshold,
             )
+            cs = getattr(self._am, 'controller_state', None)
+            if cs is not None:
+                snap["controller_state"] = dict(cs)
+            return snap
 
     def history(self, concept_id: str) -> list[HistoryEntry]:
         """

@@ -120,13 +120,44 @@ python3 src/awareness_manager/evaluation/run_ablation.py --disable F1 F3
 
 ---
 
+## Interactive Dashboard
+
+The dashboard supports live simulation, offline replay, and A/B comparison.
+
+```bash
+# Live AM — PV inspection scenario (default):
+python3 src/awareness_manager/demos/run_dashboard.py
+
+# Live AM — social serving scenario (waiter robot, 10 persons, drink classes):
+python3 src/awareness_manager/demos/run_dashboard.py --scenario social_serving
+
+# Baseline strategies:
+python3 src/awareness_manager/demos/run_dashboard.py --strategy reactive
+python3 src/awareness_manager/demos/run_dashboard.py --strategy always_on
+
+# Record a trace to disk while running:
+python3 src/awareness_manager/demos/run_dashboard.py --log
+
+# Replay a saved trace:
+python3 src/awareness_manager/demos/run_dashboard.py --replay traces/run_001
+
+# Side-by-side A/B comparison with M1–M6 overlay:
+python3 src/awareness_manager/demos/run_dashboard.py \
+    --replay traces/am_run --compare traces/reactive_run
+```
+
+The social serving dashboard includes a **controller state panel** (above the graph)
+showing the current MONITORING / SERVING state and the person being served.
+
+---
+
 ## Other Demos
 
 ```bash
 # Interactive birdhouse visualizer (single AM, click to observe):
 python3 src/awareness_manager/demos/run_birdhouse_viz.py
 
-# PV inspection scenario:
+# PV inspection scenario (Matplotlib, no Dash):
 python3 src/awareness_manager/demos/run_pv_inspection_viz.py
 ```
 

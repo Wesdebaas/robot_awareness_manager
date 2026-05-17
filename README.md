@@ -100,7 +100,7 @@ src/awareness_manager/
 │   ├── knowledge_base.py           # Semantic graph with attention + epistemic error
 │   ├── instance_knowledge_base.py  # Instance-level graph
 │   ├── concept.py                  # Concept / InstanceConcept dataclasses
-│   ├── feature_config.py           # Toggle formulas F1–F5 (ablation)
+│   ├── feature_config.py           # Toggle formulas F1-F5 (ablation)
 │   ├── baselines/
 │   │   ├── strategy.py             # AttentionStrategy Protocol (PEP 544)
 │   │   ├── always_on.py            # AlwaysOnBaseline
@@ -116,7 +116,7 @@ src/awareness_manager/
 │   │   ├── replay_reader.py        # ReplayReader - offline playback
 │   │   └── snapshot.py             # Layout computation, snapshot serialisation
 │   └── evaluation/
-│       ├── metrics.py              # M1–M6 metric library (pure functions over traces)
+│       ├── metrics.py              # M1-M6 metric library (pure functions over traces)
 │       ├── batch.py                # Multi-run experiment driver
 │       ├── report.py               # Report generator (CSV, HTML, Markdown)
 │       └── __main__.py             # CLI entry point

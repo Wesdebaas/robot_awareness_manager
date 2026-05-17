@@ -6,6 +6,7 @@ _FLAG_MAP: dict[str, str] = {
     'f3': 'use_f3_utility_saturation',
     'f4': 'use_f4_memory_budget',
     'f5': 'use_f5_epistemic_drift',
+    'f6': 'use_f6_observation_cost',
 }
 
 
@@ -28,6 +29,7 @@ class FeatureConfig:
     use_f3_utility_saturation:   bool = True
     use_f4_memory_budget:        bool = True
     use_f5_epistemic_drift:      bool = True
+    use_f6_observation_cost:     bool = True
 
     @classmethod
     def all_on(cls) -> 'FeatureConfig':
@@ -35,7 +37,7 @@ class FeatureConfig:
 
     @classmethod
     def all_off(cls) -> 'FeatureConfig':
-        return cls(False, False, False, False, False)
+        return cls(False, False, False, False, False, False)
 
     @classmethod
     def with_disabled(cls, *flags: str) -> 'FeatureConfig':

@@ -28,9 +28,9 @@ from awareness_manager.baselines.strategy import AttentionStrategy
 _CANVAS_W = 1000.0
 _CANVAS_H = 750.0
 _ORBIT_RADIUS_BASE = 68.0
-_ORBIT_RADIUS_STEP = 18.0  # extra radius per instance beyond 2
+_ORBIT_RADIUS_STEP = 8.0   # extra radius per instance beyond 2 (reduced from 18 → smaller orbits)
 # Margin reserved on each edge for instance orbits (class nodes must stay inside)
-_LAYOUT_MARGIN = _ORBIT_RADIUS_BASE + _ORBIT_RADIUS_STEP * 3 + 20  # ≈ 122 px
+_LAYOUT_MARGIN = _ORBIT_RADIUS_BASE + _ORBIT_RADIUS_STEP * 3 + 20  # ≈ 112 px
 
 
 def _fit_to_canvas(pos_raw: dict) -> dict[str, dict]:
@@ -168,11 +168,12 @@ def compute_positions_from_structure(structure: dict) -> dict[str, dict]:
         G.add_edge(id_a, id_b, weight=weight)
 
     pos_raw = nx.spring_layout(G, seed=42)
-    positions: dict[str, dict] = _fit_to_canvas(pos_raw)
 
     class_instances: dict[str, list[str]] = defaultdict(list)
     for inst in structure.get("instances", []):
         class_instances[inst["class_id"]].append(inst["id"])
+
+    positions: dict[str, dict] = _fit_to_canvas(pos_raw)
 
     for class_id, instance_ids in class_instances.items():
         if class_id not in positions:
@@ -210,27 +211,28 @@ def compute_positions(am: AttentionStrategy) -> dict[str, dict]:
         G.add_edge(id_a, id_b, weight=weight)
 
     pos_raw = nx.spring_layout(G, seed=42)
-    positions: dict[str, dict] = _fit_to_canvas(pos_raw)
 
+    class_instances: dict[str, list[str]] = defaultdict(list)
     if am.instance_kb is not None:
-        class_instances: dict[str, list[str]] = defaultdict(list)
         for iid in am.instance_kb.instance_ids():
             inst = am.instance_kb.get_instance(iid)
             class_instances[inst.class_id].append(iid)
 
-        for class_id, instance_ids in class_instances.items():
-            if class_id not in positions:
-                continue
-            pcx = positions[class_id]["x"]
-            pcy = positions[class_id]["y"]
-            n = len(instance_ids)
-            radius = _ORBIT_RADIUS_BASE + _ORBIT_RADIUS_STEP * max(0, n - 2)
-            for i, iid in enumerate(sorted(instance_ids)):
-                angle = 2.0 * math.pi * i / n + math.pi / 6.0
-                positions[iid] = {
-                    "x": float(round(pcx + radius * math.cos(angle), 2)),
-                    "y": float(round(pcy + radius * math.sin(angle), 2)),
-                }
+    positions: dict[str, dict] = _fit_to_canvas(pos_raw)
+
+    for class_id, instance_ids in class_instances.items():
+        if class_id not in positions:
+            continue
+        pcx = positions[class_id]["x"]
+        pcy = positions[class_id]["y"]
+        n = len(instance_ids)
+        radius = _ORBIT_RADIUS_BASE + _ORBIT_RADIUS_STEP * max(0, n - 2)
+        for i, iid in enumerate(sorted(instance_ids)):
+            angle = 2.0 * math.pi * i / n + math.pi / 6.0
+            positions[iid] = {
+                "x": float(round(pcx + radius * math.cos(angle), 2)),
+                "y": float(round(pcy + radius * math.sin(angle), 2)),
+            }
 
     return positions
 
@@ -353,7 +355,7 @@ def get_snapshot(
                 "position": pos,
             })
 
-    # ── Semantic edges (class–class, dashed light grey) ───────────────────
+    # ── Semantic edges (class-class, dashed light grey) ───────────────────
     for id_a, id_b, weight in kb.semantic_edges():
         elements.append({
             "data": {
@@ -366,7 +368,7 @@ def get_snapshot(
             }
         })
 
-    # ── Relational edges (instance–instance, solid teal) ─────────────────
+    # ── Relational edges (instance-instance, solid teal) ─────────────────
     if ikb is not None:
         for id_a, id_b, weight, relation_type in ikb.relational_edges():
             rtype = relation_type or "related"

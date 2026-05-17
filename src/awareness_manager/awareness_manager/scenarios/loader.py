@@ -14,7 +14,8 @@ _AM_NS = 'http://coresense.eu/awareness/'
 
 _CONCEPTS_QUERY = """
 PREFIX am: <http://coresense.eu/awareness/>
-SELECT ?conceptId ?conceptType ?decayRate ?classEMode ?derivedAggregation ?absentFallbackE WHERE {
+SELECT ?conceptId ?conceptType ?decayRate ?classEMode ?derivedAggregation ?absentFallbackE
+       ?observationCost WHERE {
     ?c a am:Concept ;
        am:conceptId ?conceptId ;
        am:conceptType ?conceptType ;
@@ -22,6 +23,7 @@ SELECT ?conceptId ?conceptType ?decayRate ?classEMode ?derivedAggregation ?absen
     OPTIONAL { ?c am:classEMode ?classEMode . }
     OPTIONAL { ?c am:derivedAggregation ?derivedAggregation . }
     OPTIONAL { ?c am:absentFallbackE ?absentFallbackE . }
+    OPTIONAL { ?c am:observationCost ?observationCost . }
 }
 """
 
@@ -39,12 +41,29 @@ SELECT ?sourceId ?targetId ?weight WHERE {
 
 _INSTANCES_QUERY = """
 PREFIX am: <http://coresense.eu/awareness/>
-SELECT ?conceptId ?conceptType ?decayRate ?classId WHERE {
+SELECT ?conceptId ?conceptType ?decayRate ?classId ?observationCost ?zone WHERE {
     ?i a am:InstanceConcept ;
        am:conceptId ?conceptId ;
        am:conceptType ?conceptType ;
        am:decayRate ?decayRate ;
        am:classId ?classId .
+    OPTIONAL { ?i am:observationCost ?observationCost . }
+    OPTIONAL { ?i am:zone ?zone . }
+}
+"""
+
+_ZONE_QUERY = """
+PREFIX am: <http://coresense.eu/awareness/>
+SELECT ?conceptId ?zone WHERE {
+    {
+        ?c a am:Concept ;
+           am:conceptId ?conceptId ;
+           am:zone ?zone .
+    } UNION {
+        ?c a am:InstanceConcept ;
+           am:conceptId ?conceptId ;
+           am:zone ?zone .
+    }
 }
 """
 
@@ -78,6 +97,7 @@ def load_kb_from_ttl(ttl_path: Path) -> KnowledgeBase:
         class_e_mode = sol['classEMode'].value if sol['classEMode'] is not None else 'standalone'
         derived_agg = sol['derivedAggregation'].value if sol['derivedAggregation'] is not None else 'mean'
         fallback_e = float(sol['absentFallbackE'].value) if sol['absentFallbackE'] is not None else 1.0
+        obs_cost = float(sol['observationCost'].value) if sol['observationCost'] is not None else 1.0
         kb.add_concept(Concept(
             concept_id=sol['conceptId'].value,
             concept_type=sol['conceptType'].value,
@@ -85,6 +105,7 @@ def load_kb_from_ttl(ttl_path: Path) -> KnowledgeBase:
             class_e_mode=class_e_mode,
             derived_aggregation=derived_agg,
             absent_fallback_e=fallback_e,
+            observation_cost=obs_cost,
         ))
 
     for sol in store.query(_EDGES_QUERY):
@@ -113,9 +134,11 @@ def load_instance_kb_from_ttl(ttl_path: Path) -> InstanceKnowledgeBase:
         cid = sol['conceptId'].value
         if cid not in raw:
             raw[cid] = {
-                'concept_type': sol['conceptType'].value,
-                'decay_rate':   float(sol['decayRate'].value),
-                'class_ids':    [],
+                'concept_type':    sol['conceptType'].value,
+                'decay_rate':      float(sol['decayRate'].value),
+                'class_ids':       [],
+                'observation_cost': float(sol['observationCost'].value)
+                                   if sol['observationCost'] is not None else 1.0,
             }
         raw[cid]['class_ids'].append(sol['classId'].value)
 
@@ -127,6 +150,7 @@ def load_instance_kb_from_ttl(ttl_path: Path) -> InstanceKnowledgeBase:
             decay_rate=d['decay_rate'],
             class_id=class_ids[0],
             extra_class_ids=class_ids[1:],
+            observation_cost=d['observation_cost'],
         ))
 
     for sol in store.query(_INSTANCE_EDGES_QUERY):
@@ -139,6 +163,19 @@ def load_instance_kb_from_ttl(ttl_path: Path) -> InstanceKnowledgeBase:
         )
 
     return ikb
+
+
+def load_zone_assignment_from_ttl(ttl_path: Path) -> dict[str, str]:
+    """Load zone assignments from a Turtle file.
+
+    Returns a dict mapping concept_id → zone_name for every concept or instance
+    that carries an am:zone predicate. Used by AwarenessManager for F6 travel cost.
+    """
+    store = _open_store(ttl_path)
+    return {
+        sol['conceptId'].value: sol['zone'].value
+        for sol in store.query(_ZONE_QUERY)
+    }
 
 
 def sync_instance_kb_from_store(

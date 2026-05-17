@@ -113,16 +113,14 @@ def _build_reactive(args: argparse.Namespace):
 
 _DRINK_CLASSES = {'juice', 'cola', 'beer', 'wine', 'champagne'}
 _DISAPPEAR_RATE = 0.003  # per drink per second → ~1 disappearance every 33s
+_FINISH_RATE    = 1 / 40.0  # person finishes their drink every ~40 s (Poisson)
+_SERVE_DELAY    = 4.0       # simulated seconds for robot to fetch and return a drink
 
 
 def _make_social_serving_tick_hook(seed: int = 42):
     """
-    Returns a tick_hook that randomly removes drinks from the IKB.
-
-    Drink disappearances are irreversible during a dashboard run — the robot's
-    epistemic state degrades for gone drinks and the class E (derived) adjusts
-    to reflect only remaining instances.  Visual cue: confirmed-absent drink
-    nodes dim to A=0 and stop being scheduled.
+    Baseline tick_hook: only handles drink disappearances (no goal switching).
+    Used for always_on and reactive baselines in the dashboard.
     """
     from awareness_manager.concept import PresenceState
 
@@ -145,22 +143,151 @@ def _make_social_serving_tick_hook(seed: int = 42):
     return _hook
 
 
+def _make_ss_controller_hook(seed: int = 42):
+    """
+    Full social-serving controller tick_hook for the awareness_manager strategy.
+
+    Implements a MONITORING / SERVING state machine:
+      - Samples drink-finish and drink-disappearance events every tick.
+      - Every ~3 s in MONITORING: scans all persons; on finding one without a
+        drink, calls am.set_goal(serve_<person>) and enters SERVING state.
+      - After _SERVE_DELAY seconds in SERVING: simulates delivery (marks person
+        as having a drink, resets goal to serve_people_drinks) → MONITORING.
+
+    Sets strategy.controller_state = {"state": "monitoring"|"serving",
+                                       "target": person_id | None}
+    each tick so the dashboard panel can read it.
+    """
+    from awareness_manager.concept import PresenceState
+    from awareness_manager.scenarios.social_serving import (
+        create_serve_goal,
+        preferred_drinks_for,
+    )
+
+    rng = random.Random(seed)
+    dt = 0.1  # runner dt
+
+    ctx: dict = {
+        'initialized':  False,
+        'persons':      [],
+        'drinks':       [],
+        'gt_has_drink': {},   # person_id → bool (ground truth)
+        'gt_drinks':    {},   # drink_id  → bool (present in world)
+        'state':        'monitoring',
+        'target':       None,    # person currently being served
+        'check_timer':  0.0,     # countdown to next person scan
+        'serve_timer':  0.0,     # countdown to delivery completion
+    }
+
+    def _init(ikb) -> None:
+        for iid in ikb.instance_ids():
+            inst = ikb.get_instance(iid)
+            if any(c in _DRINK_CLASSES for c in inst.all_class_ids):
+                ctx['drinks'].append(iid)
+            else:
+                ctx['persons'].append(iid)
+        ctx['gt_has_drink'] = {p: True for p in ctx['persons']}
+        ctx['gt_drinks']    = {d: True for d in ctx['drinks']}
+        for pid in ctx['persons']:
+            ikb.get_instance(pid).properties['has_drink'] = True
+        ctx['initialized'] = True
+
+    def _pick_drink_class(ikb, person_id: str) -> str | None:
+        person_inst = ikb.get_instance(person_id)
+        for dc in preferred_drinks_for(person_inst.all_class_ids):
+            active = [
+                did for did in ikb.instances_of_class(dc)
+                if (ikb.get_instance(did).presence_state != PresenceState.CONFIRMED_ABSENT
+                    and ctx['gt_drinks'].get(did, True))
+            ]
+            if active:
+                return dc
+        return None
+
+    def _hook(strategy, elapsed: float) -> None:
+        ikb = strategy.instance_kb
+        if ikb is None:
+            return
+        if not ctx['initialized']:
+            _init(ikb)
+
+        # ── Event sampling (every tick) ────────────────────────────────
+        for pid in ctx['persons']:
+            if rng.random() < _FINISH_RATE * dt:
+                ctx['gt_has_drink'][pid] = False
+
+        for did in ctx['drinks']:
+            if rng.random() < _DISAPPEAR_RATE * dt:
+                if ctx['gt_drinks'].get(did, True):
+                    ctx['gt_drinks'][did] = False
+                    inst = ikb.get_instance(did)
+                    if inst.presence_state != PresenceState.CONFIRMED_ABSENT:
+                        ikb.mark_suspected_absent(did)
+                        ikb.confirm_absent(did)
+
+        # ── State machine ──────────────────────────────────────────────
+        if ctx['state'] == 'monitoring':
+            ctx['check_timer'] -= dt
+            if ctx['check_timer'] <= 0.0:
+                ctx['check_timer'] = 3.0  # scan period
+                for pid in ctx['persons']:
+                    if not ctx['gt_has_drink'].get(pid, True):
+                        dc = _pick_drink_class(ikb, pid)
+                        if dc:
+                            goal_id = create_serve_goal(strategy.kb, pid, dc)
+                            strategy.set_goal(goal_id)
+                            ctx['state']       = 'serving'
+                            ctx['target']      = pid
+                            ctx['serve_timer'] = _SERVE_DELAY
+                            ikb.get_instance(pid).properties['has_drink'] = False
+                            break  # serve one person at a time
+
+        elif ctx['state'] == 'serving':
+            ctx['serve_timer'] -= dt
+            if ctx['serve_timer'] <= 0.0:
+                pid = ctx['target']
+                dc = _pick_drink_class(ikb, pid) if pid else None
+                if pid and dc:
+                    # Successful delivery
+                    ctx['gt_has_drink'][pid] = True
+                    ikb.get_instance(pid).properties['has_drink'] = True
+                else:
+                    # Preferred drink unavailable — give up this serve
+                    pass
+                strategy.set_goal('serve_people_drinks')
+                ctx['state']       = 'monitoring'
+                ctx['target']      = None
+                ctx['check_timer'] = 1.0  # scan again soon
+
+        # ── Export controller_state for dashboard panel ────────────────
+        strategy.controller_state = {
+            'state':  ctx['state'],
+            'target': ctx['target'],
+        }
+
+    return _hook
+
+
 def _build_social_serving_am(args):
     from awareness_manager.awareness_manager import AwarenessManager
     from awareness_manager.scenarios.social_serving import (
+        ZONE_TRAVEL_TIMES,
         build_social_serving_instance_kb,
         build_social_serving_kb,
+        load_zone_assignment,
     )
 
     kb  = build_social_serving_kb()
     ikb = build_social_serving_instance_kb()
     am  = AwarenessManager(
-        kb, goal_id='serve_drinks', alpha=0.5,
+        kb, goal_id='serve_people_drinks', alpha=0.5,
         budget=3, observation_interval=5.0,
         instance_kb=ikb,
         instance_relational_weight=0.3,
+        zone_assignment=load_zone_assignment(),
+        zone_travel_times=ZONE_TRAVEL_TIMES,
     )
-    return am, True, _make_social_serving_tick_hook()
+    return am, True, _make_ss_controller_hook()
 
 
 def _build_social_serving_always_on(args):
@@ -173,7 +300,7 @@ def _build_social_serving_always_on(args):
     kb  = build_social_serving_kb()
     ikb = build_social_serving_instance_kb()
     strategy = AlwaysOnBaseline(
-        kb, goal_id='serve_drinks',
+        kb, goal_id='serve_people_drinks',
         observation_interval=5.0, ikb=ikb,
     )
     return strategy, False, _make_social_serving_tick_hook()
@@ -189,7 +316,7 @@ def _build_social_serving_reactive(args):
     kb  = build_social_serving_kb()
     ikb = build_social_serving_instance_kb()
     strategy = ReactiveBaseline(
-        kb, goal_id='serve_drinks',
+        kb, goal_id='serve_people_drinks',
         budget=3, observation_interval=5.0, ikb=ikb,
     )
     return strategy, True, _make_social_serving_tick_hook()

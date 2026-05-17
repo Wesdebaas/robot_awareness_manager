@@ -83,6 +83,8 @@ class AwarenessManager:
         certainty_threshold: float = 0.0,
         suspected_absent_priority_scale: float = 0.5,
         feature_config: FeatureConfig | None = None,
+        zone_assignment: dict[str, str] | None = None,
+        zone_travel_times: dict[tuple[str, str], float] | None = None,
     ) -> None:
         """
         Args:
@@ -127,11 +129,17 @@ class AwarenessManager:
                                        SUSPECTED_ABSENT instances (default 0.5).
                                        Set to 1.0 to schedule them at full priority,
                                        or 0.0 to exclude them from the schedule.
-            feature_config:            Which of the five grounding formulas to
+            feature_config:            Which of the six grounding formulas to
                                        activate. None (default) enables all formulas,
                                        preserving existing behaviour. Use
                                        FeatureConfig.with_disabled('f2') or
                                        FeatureConfig.all_off() for ablation studies.
+            zone_assignment:           Dict mapping concept/instance ID → zone name.
+                                       Used by F6 to determine cross-zone travel cost.
+                                       Load via load_zone_assignment_from_ttl().
+            zone_travel_times:         Dict mapping (zone_a, zone_b) → seconds.
+                                       Symmetric lookup is tried automatically.
+                                       Only used when feature_config.f6 is True.
         """
         if goal_id not in kb.concept_ids():
             raise ValueError(f"Goal concept '{goal_id}' not in knowledge base.")
@@ -150,6 +158,9 @@ class AwarenessManager:
         self._certainty_threshold = certainty_threshold
         self._suspected_absent_priority_scale = suspected_absent_priority_scale
         self._fc = feature_config if feature_config is not None else FeatureConfig()
+        self._zone_assignment = zone_assignment or {}
+        self._zone_travel_times = zone_travel_times or {}
+        self._robot_pos: str | None = None
         self._attention: dict[str, float] = {}
 
         # Per-channel attention contributions - stashed in _recompute_attention()
@@ -264,7 +275,7 @@ class AwarenessManager:
     # Tick
     # ------------------------------------------------------------------
 
-    def tick(self, dt: float) -> list[str]:
+    def tick(self, dt: float, robot_pos: str | None = None) -> list[str]:
         """
         Advance simulation by dt seconds and return the refresh schedule.
 
@@ -274,12 +285,20 @@ class AwarenessManager:
             2. _advance_mission_queue(dt) - decrement ETAs, promote arrived goals (Formula 2)
             3. Recompute class attention (current goal + discounted future goals)  (Formulas 1+2)
                Compute instance attention from class attention                     (Formulas 1+2)
-            4. Rank ALL concepts (class + instance) by priority = E x A (descending)
+            4. Rank ALL concepts (class + instance) by cost-adjusted priority     (Formulas 5+6)
             5. Return top-budget concept IDs
+
+        Args:
+            dt:        Elapsed simulated seconds since last tick.
+            robot_pos: Current robot location as a concept/instance ID. When provided
+                       and F6 is enabled, the schedule is sorted by (E x A) / travel_cost
+                       so nearby high-urgency concepts are preferred. When None, falls
+                       back to pure E x A ordering (F5 only).
 
         Returns:
             List of up to `budget` concept IDs ordered by priority (highest first).
         """
+        self._robot_pos = robot_pos
         self._kb.tick(dt)
         if self._instance_kb is not None:
             self._instance_kb.tick(dt)
@@ -623,6 +642,7 @@ class AwarenessManager:
                 "f3": self._fc.use_f3_utility_saturation,
                 "f4": self._fc.use_f4_memory_budget,
                 "f5": self._fc.use_f5_epistemic_drift,
+                "f6": self._fc.use_f6_observation_cost,
             },
         }
 
@@ -735,6 +755,46 @@ class AwarenessManager:
 
         self._attention = combined
 
+    def _travel_cost(self, concept_id: str) -> float:
+        """
+        F6 - Spatial Opportunity Cost: estimated seconds to reach and observe concept_id.
+
+        Two-layer model:
+          1. Base observation cost: time to examine the concept once at its location.
+             Loaded from am:observationCost in the TTL (default 1.0 s).
+          2. Zone travel cost: added when robot_pos and concept_id are in different zones.
+             Looked up from zone_travel_times; symmetric (a→b == b→a if only one defined).
+
+        When F6 is disabled or robot_pos is None, returns 1.0 (uniform cost → pure F5).
+        Class concepts that carry no zone are assumed co-located with the robot (no travel).
+        """
+        if not self._fc.use_f6_observation_cost or self._robot_pos is None:
+            return 1.0
+
+        # Base observation cost from the concept's own field.
+        if concept_id in self._kb.concept_ids():
+            base = self._kb.get_concept(concept_id).observation_cost
+        elif self._instance_kb is not None and concept_id in self._instance_kb.instance_ids():
+            base = self._instance_kb.get_instance(concept_id).observation_cost
+        else:
+            base = 1.0
+
+        if self._robot_pos == concept_id:
+            return max(base, 1e-6)  # already here — only the observation cost applies
+
+        # Zone-based travel cost
+        if self._zone_assignment and self._zone_travel_times:
+            robot_zone = self._zone_assignment.get(self._robot_pos)
+            target_zone = self._zone_assignment.get(concept_id)
+            if robot_zone and target_zone and robot_zone != target_zone:
+                travel = self._zone_travel_times.get(
+                    (robot_zone, target_zone),
+                    self._zone_travel_times.get((target_zone, robot_zone), 10.0),
+                )
+                return travel + base
+
+        return max(base, 1e-6)
+
     def _top_n(self) -> list[str]:
         p = self.priorities()
         # Only schedule concepts with strictly positive priority.
@@ -752,4 +812,10 @@ class AwarenessManager:
             if k not in self._kb.concept_ids()  # instance IDs always pass through
             or self._kb.get_concept(k).class_e_mode != 'derived'
         }
-        return sorted(schedulable, key=schedulable.__getitem__, reverse=True)[: self._budget]
+        # F6 - Spatial Opportunity Cost: sort by (E x A) / travel_cost so the AM
+        # prefers nearby high-urgency concepts over distant ones. When F6 is off or
+        # robot_pos is None, travel_cost = 1.0 everywhere and ordering is pure F5.
+        def _sort_key(cid: str) -> float:
+            return schedulable[cid] / self._travel_cost(cid)
+
+        return sorted(schedulable, key=_sort_key, reverse=True)[: self._budget]

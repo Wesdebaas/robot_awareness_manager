@@ -7,21 +7,21 @@ read from the trace file only - no scenario re-running required.
 
 Metric set (primary → secondary)
 ---------------------------------
-M1  e_at_transition     – max E across new-goal's 1-hop hood at the transition tick.
+M1  e_at_transition     - max E across new-goal's 1-hop hood at the transition tick.
                           Primary readiness metric: did the strategy prepare before the switch?
-M2  pre_transition_attn – mean attention to incoming-goal hood in the window before switch.
+M2  pre_transition_attn - mean attention to incoming-goal hood in the window before switch.
                           Tests F2 (Anticipatory Horizon) directly: did the AM predict the need?
-M3  lag_seconds         – seconds until E_max < 0.1 after the transition.
+M3  lag_seconds         - seconds until E_max < 0.1 after the transition.
                           Recovery speed; complements M1 (low M1 → low M3 almost by definition).
-M4  e_relevant          – run-mean epistemic error over goal-relevant concepts.
+M4  e_relevant          - run-mean epistemic error over goal-relevant concepts.
                           Ongoing knowledge quality; useful for regime comparisons.
-M5  budget_util         – schedule slots used / budget per tick.
+M5  budget_util         - schedule slots used / budget per tick.
                           Sanity check; confirms budget is the binding constraint.
 
 Additional functions available but not included in all_metrics() output:
-    mean_epistemic_error_irrelevant() – E over concepts outside the mission neighbourhood.
-    anticipatory_cache_hit_rate()     – binary pre-cache hit rate (redundant with M2).
-    refresh_count_by_relevance()      – relevant vs irrelevant schedule slots.
+    mean_epistemic_error_irrelevant() - E over concepts outside the mission neighbourhood.
+    anticipatory_cache_hit_rate()     - binary pre-cache hit rate (redundant with M2).
+    refresh_count_by_relevance()      - relevant vs irrelevant schedule slots.
 
 Neighborhood convention
 -----------------------
@@ -663,19 +663,19 @@ def all_metrics(trace: dict, *, params: dict | None = None) -> dict:
     Returns:
         {
             # Primary metrics (transition quality):
-            "m1_e_at_transition":     float | None,  – max E in new-goal hood at switch tick
-            "m2_pre_transition_attn": float | None,  – mean attention to incoming hood before switch
-            "m3_lag_seconds":         float | None,  – seconds until E_max < 0.1 after switch
+            "m1_e_at_transition":     float | None,  - max E in new-goal hood at switch tick
+            "m2_pre_transition_attn": float | None,  - mean attention to incoming hood before switch
+            "m3_lag_seconds":         float | None,  - seconds until E_max < 0.1 after switch
 
             # Secondary metrics (run-level quality):
-            "m4_e_relevant":          float,  – run-mean E over goal-relevant concepts
-            "m5_budget_util":         float,  – mean schedule utilisation (slots / budget)
+            "m4_e_relevant":          float,  - run-mean E over goal-relevant concepts
+            "m5_budget_util":         float,  - mean schedule utilisation (slots / budget)
 
             # Full nested results:
-            "m_cognitive_lag":  {...},   – full cognitive_lag() result
-            "m_pre_attn":       {...},   – full pre_transition_attention() result
-            "m_e_relevant":     {...},   – full mean_epistemic_error_relevant() result
-            "m_budget_util":    {...},   – full budget_utilisation() result
+            "m_cognitive_lag":  {...},   - full cognitive_lag() result
+            "m_pre_attn":       {...},   - full pre_transition_attention() result
+            "m_e_relevant":     {...},   - full mean_epistemic_error_relevant() result
+            "m_budget_util":    {...},   - full budget_utilisation() result
         }
     """
     meta = trace["meta"]

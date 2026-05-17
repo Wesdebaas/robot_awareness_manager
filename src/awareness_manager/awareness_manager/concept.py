@@ -46,6 +46,10 @@ class Concept:
     epistemic_error: float = 0.0                        # E_t in [0, 1]
     last_updated: float = field(default_factory=time.time)
 
+    # F6 - Spatial Opportunity Cost: time (seconds) to examine this concept once
+    # the robot is already at its location. Parsed from am:observationCost in TTL.
+    observation_cost: float = 1.0
+
     # Perceptual Prediction Error (Formula PPE)
     predicted_value: float | None = None  # last cached expected observation
     prediction_error: float = 0.0         # |observed − predicted| at last update

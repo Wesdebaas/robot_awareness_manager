@@ -212,7 +212,13 @@ class InstanceKnowledgeBase:
         result: dict[str, float] = {}
         for iid in active:
             inst = self._instances[iid]
-            base = max((class_attention.get(c, 0.0) for c in inst.all_class_ids), default=0.0)
+            # Class-gate baseline + direct goal-to-instance attention (F6 parameterised goals:
+            # a goal node in the class KB may have an edge directly to an instance ID, giving
+            # that instance a targeted boost without routing through its class).
+            base = max(
+                max((class_attention.get(c, 0.0) for c in inst.all_class_ids), default=0.0),
+                class_attention.get(iid, 0.0),
+            )
             boost = relational_boost.get(iid, 0.0) * instance_relational_weight
             result[iid] = min(1.0, base + boost)
 
