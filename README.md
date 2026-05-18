@@ -6,7 +6,7 @@ Master's thesis project - TU Delft / CoreSense Horizon Europe.
 
 ## Overview
 
-The system models a robot's knowledge state as a semantic graph where each concept carries an **epistemic error** E ∈ [0, 1] (0 = fresh, 1 = fully unknown). Concepts decay toward uncertainty over time; active observation reduces their error. Five grounding formulas determine which concepts to observe and by how much:
+The system models a robot's knowledge state as a semantic graph where each concept carries an **epistemic error** E ∈ [0, 1] (0 = fresh, 1 = fully unknown). Concepts decay toward uncertainty over time; active observation reduces their error. Six grounding formulas determine which concepts to observe and by how much:
 
 | Formula | Name | Role |
 |---------|------|------|
@@ -15,6 +15,7 @@ The system models a robot's knowledge state as a semantic graph where each conce
 | F3 | Utility Saturation | Refresh amount calibrated to drift accumulated since last observation |
 | F4 | Quadratic Cost Constraint | Search depth derived from memory budget B |
 | F5 | Epistemic Error / Entropy | Drift accumulates over time; priority = E x A |
+| F6 | Spatial Opportunity Cost | Scheduling priority divided by travel cost to reach a concept |
 
 Two baseline strategies are included for comparison: **AlwaysOnBaseline** (no budget, refreshes everything) and **ReactiveBaseline** (1-hop rule-based, round-robin, no anticipation).
 
@@ -39,22 +40,28 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/src/awareness_manager
 
 ### Interactive Dashboard
 
-Live simulation with the Awareness Manager on the PV inspection scenario:
+Live simulation with the Awareness Manager on the social serving scenario:
 
 ```bash
-python3 src/awareness_manager/demos/run_dashboard.py
+python3 src/awareness_manager/demos/run_dashboard.py --scenario social_serving
+```
+
+Or on the PV inspection scenario:
+
+```bash
+python3 src/awareness_manager/demos/run_dashboard.py --scenario pv_inspection
 ```
 
 Other modes:
 
 ```bash
 # Run with a different strategy
-python3 src/awareness_manager/demos/run_dashboard.py --strategy reactive
-python3 src/awareness_manager/demos/run_dashboard.py --strategy always_on
+python3 src/awareness_manager/demos/run_dashboard.py --scenario pv_inspection --strategy reactive
+python3 src/awareness_manager/demos/run_dashboard.py --scenario pv_inspection --strategy always_on
 
 # Log a trace to disk while running live
-python3 src/awareness_manager/demos/run_dashboard.py --log
-python3 src/awareness_manager/demos/run_dashboard.py --log --log-path traces/my_run
+python3 src/awareness_manager/demos/run_dashboard.py --scenario pv_inspection --log
+python3 src/awareness_manager/demos/run_dashboard.py --scenario pv_inspection --log --log-path traces/my_run
 
 # Replay a saved trace
 python3 src/awareness_manager/demos/run_dashboard.py --replay traces/my_run
@@ -66,6 +73,27 @@ python3 src/awareness_manager/demos/run_dashboard.py \
 
 Open `http://localhost:8050` in a browser. The dashboard shows the semantic graph with
 concept epistemic errors, per-concept attention sparklines, and an event timeline.
+
+### ROS2 Live Mode
+
+Connect the dashboard to a running `awareness_node` instead of an internal simulation:
+
+```bash
+# Terminal 1 — start the full ROS2 stack (node + dashboard together)
+ros2 launch awareness_manager awareness_demo.launch.py
+
+# Or start them separately:
+# Terminal 1
+ros2 run awareness_manager awareness_node
+
+# Terminal 2
+python3 src/awareness_manager/demos/run_dashboard.py --ros --scenario social_serving
+```
+
+In `--ros` mode the dashboard subscribes to `awareness/state`, `awareness/schedule`,
+`awareness/goal`, and `awareness/controller_state` topics and displays live data from
+the running node. The controller state panel (MONITORING / SERVING badge + target person)
+is driven by the node's internal state machine.
 
 ### Batch Evaluation
 
@@ -96,22 +124,26 @@ Outputs: `summary.csv`, `plots.html` (interactive Plotly figures), `summary.md`
 ```
 src/awareness_manager/
 ├── awareness_manager/
-│   ├── awareness_manager.py        # Core AM (all 5 formulas)
+│   ├── awareness_manager.py        # Core AM (all 6 formulas)
 │   ├── knowledge_base.py           # Semantic graph with attention + epistemic error
 │   ├── instance_knowledge_base.py  # Instance-level graph
 │   ├── concept.py                  # Concept / InstanceConcept dataclasses
-│   ├── feature_config.py           # Toggle formulas F1-F5 (ablation)
+│   ├── feature_config.py           # Toggle formulas F1-F6 (ablation)
+│   ├── ros_node.py                 # ROS2 node: publishes state, drives SS controller
 │   ├── baselines/
 │   │   ├── strategy.py             # AttentionStrategy Protocol (PEP 544)
 │   │   ├── always_on.py            # AlwaysOnBaseline
 │   │   └── reactive.py             # ReactiveBaseline
 │   ├── scenarios/
-│   │   ├── pv_inspection.py        # Primary scenario: drone inspects solar plant (D7.1)
-│   │   ├── manufacturing_d61.py    # Secondary scenario (D6.1)
-│   │   └── birdhouse.py            # Toy scenario for unit tests
+│   │   ├── pv_inspection.py        # PV inspection scenario (CoreSense D7.1)
+│   │   ├── pv_inspection.ttl       # Turtle/RDF ontology for PV inspection
+│   │   ├── social_serving.py       # Social serving scenario (waiter robot, 10 persons)
+│   │   ├── social_serving.ttl      # Turtle/RDF ontology for social serving
+│   │   └── loader.py               # Generic TTL→KnowledgeBase loader (pyoxigraph)
 │   ├── visualization/
-│   │   ├── dashboard.py            # Dash app (live / replay / compare)
+│   │   ├── dashboard.py            # Dash app (live / replay / compare / ROS)
 │   │   ├── runner.py               # SimulationRunner (threaded real-time loop)
+│   │   ├── ros_source.py           # RosStateSource - live data from ROS2 topics
 │   │   ├── trace_logger.py         # TraceLogger - streams ticks to JSONL
 │   │   ├── replay_reader.py        # ReplayReader - offline playback
 │   │   └── snapshot.py             # Layout computation, snapshot serialisation
@@ -119,9 +151,11 @@ src/awareness_manager/
 │       ├── metrics.py              # M1-M6 metric library (pure functions over traces)
 │       ├── batch.py                # Multi-run experiment driver
 │       ├── report.py               # Report generator (CSV, HTML, Markdown)
-│       └── __main__.py             # CLI entry point
+│       └── __main__.py             # CLI: batch / report / ablation
 ├── demos/
-│   └── run_dashboard.py            # Dashboard entry point
+│   └── run_dashboard.py            # Dashboard entry point (live, replay, compare, ROS)
+├── launch/
+│   └── awareness_demo.launch.py    # ROS2 launch: awareness_node + dashboard
 └── test/
     ├── test_awareness_manager.py
     ├── test_knowledge_base.py
@@ -155,7 +189,9 @@ At observation interval T = 5 s and T = 10 s:
 T = 1 s is a degenerate regime (refresh amplitude too small to overcome drift for all
 strategies). See `reports/budget_obsint_sweep/summary.md` for the full breakdown.
 
-## Scenario: PV Inspection (CoreSense D7.1)
+## Scenarios
+
+### PV Inspection (CoreSense D7.1)
 
 A drone inspects a photovoltaic solar plant. Two task goals create the key behavioral contrast:
 
@@ -165,6 +201,15 @@ A drone inspects a photovoltaic solar plant. Two task goals create the key behav
 The AM begins pre-tuning for `emergency_landing` as its ETA decreases (F2), so concepts
 like `airspace` and `landing_zone` gain attention before the transition fires. Reactive
 has no such mechanism and is always "surprised" by the goal switch.
+
+### Social Serving (CoreSense D8.1)
+
+A waiter robot serves drinks to 10 persons (child / adult / VIP) in a room divided into
+zones. The robot cycles between **MONITORING** (scanning for thirsty persons) and
+**SERVING** (delivering a drink to a selected target). Goal switches to
+`serve_<person_id>` when the controller enters SERVING state, reshuffling attention via
+F1 and F6 (spatial opportunity cost from the robot's current zone). This is the primary
+showcase scenario for the full ROS2 integration.
 
 ## Running Tests
 
