@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from awareness_manager.visualization.snapshot import (
-    _channel_color,
+    channel_color as _channel_color,
     compute_positions_from_structure,
 )
 

@@ -1824,7 +1824,7 @@ def run(
 
     app = build_app(source, source_b=source_b, scenario=scenario)
 
-    if isinstance(source, SimulationRunner):
+    if hasattr(source, 'start'):
         source.start()
         try:
             app.run(debug=debug, port=port, use_reloader=False)

@@ -9,6 +9,10 @@ Usage (live mode):
     python src/awareness_manager/demos/run_dashboard.py --log
     python src/awareness_manager/demos/run_dashboard.py --log --log-path traces/run_001 --log-rate 2
 
+Usage (ROS2 live mode - subscribes to awareness_node topics):
+    python src/awareness_manager/demos/run_dashboard.py --ros --scenario social_serving
+    ros2 launch awareness_manager awareness_demo.launch.py  # starts both node + dashboard
+
 Usage (replay mode):
     python src/awareness_manager/demos/run_dashboard.py --replay traces/run_001
 
@@ -31,6 +35,7 @@ Channel colour demo (shows all four node colours):
 Flags:
     --strategy NAME  Live-mode strategy: awareness_manager (default), always_on, reactive.
     --demo           Run the channel-colour demo (overrides --strategy).
+    --ros            Subscribe to a running awareness_node via ROS2 topics (no local AM).
     --replay PATH    Load a trace directory and run in offline replay mode.
     --compare PATH   Second trace for A/B comparison (requires --replay for first trace).
     --log            Enable trace logging to disk in live mode.
@@ -385,6 +390,13 @@ def _build_channel_demo():
     return am, True, _tick_hook  # strategy, observe_top, tick_hook
 
 
+def _build_ros_source(args: argparse.Namespace):
+    from awareness_manager.visualization.ros_source import RosStateSource
+    scenario = getattr(args, 'scenario', 'social_serving') or 'social_serving'
+    source = RosStateSource(scenario=scenario)
+    return scenario, source
+
+
 def _build_live(args: argparse.Namespace) -> tuple:
     from awareness_manager.visualization.runner import SimulationRunner
 
@@ -485,11 +497,17 @@ def main() -> None:
     parser.add_argument("--log-rate", type=int, default=1, metavar="N",
                         help="Record every Nth tick (default: 1)")
     parser.add_argument("--port", type=int, default=8050)
+    parser.add_argument(
+        "--ros", action="store_true",
+        help="Subscribe to a running awareness_node via ROS2 topics (no local AM)",
+    )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
     if args.compare and not args.replay:
         raise SystemExit("--compare requires --replay to specify the first trace.")
+    if args.ros and args.replay:
+        raise SystemExit("--ros and --replay are mutually exclusive.")
 
     from awareness_manager.visualization.dashboard import run
 
@@ -505,6 +523,9 @@ def main() -> None:
         print("  Robot Awareness Dashboard - Replay mode")
         source = _build_replay(args.replay)
         scenario = source.meta.get("scenario", scenario)
+    elif args.ros:
+        print(f"  Robot Awareness Dashboard - ROS2 live ({args.scenario})")
+        scenario, source = _build_ros_source(args)
     else:
         label = "channel demo" if args.demo else scenario
         print(f"  Robot Awareness Dashboard - {label} (live)")

@@ -9,7 +9,7 @@ get_snapshot() is called on every dashboard poll (250 ms) under a threading
 lock held by SimulationRunner. It is a pure function: no side effects.
 
 Phase 2 additions:
-  - _channel_color(): hue-by-dominant-channel + lightness-by-E fill color.
+  - channel_color(): hue-by-dominant-channel + lightness-by-E fill color.
   - Per-node channel fields in element data: ch_mission, ch_anticipatory,
     ch_relational, ch_surprise - read by the inspector hover card.
   - is_active_goal: distinguishes current goal from queued task nodes.
@@ -104,7 +104,7 @@ _HUES = {
 }
 
 
-def _channel_color(
+def channel_color(
     mission: float,
     anticipatory: float,
     relational: float,
@@ -309,7 +309,7 @@ def get_snapshot(
                 "ch_anticipatory": round(ca, 4),
                 "ch_relational": round(cr, 4),
                 "ch_surprise": round(cs, 4),
-                "color": _channel_color(cm, ca, cr, cs, e),
+                "color": channel_color(cm, ca, cr, cs, e),
             },
             "position": pos,
         })
@@ -350,7 +350,7 @@ def get_snapshot(
                     "ch_anticipatory": round(ca, 4),
                     "ch_relational": round(cr, 4),
                     "ch_surprise": round(cs, 4),
-                    "color": _channel_color(cm, ca, cr, cs, e),
+                    "color": channel_color(cm, ca, cr, cs, e),
                 },
                 "position": pos,
             })

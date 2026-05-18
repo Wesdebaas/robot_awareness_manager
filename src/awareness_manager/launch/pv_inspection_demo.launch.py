@@ -23,6 +23,13 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('budget',               default_value='2',                description='Max concepts scheduled per tick'),
         DeclareLaunchArgument('tick_rate',            default_value='10.0',             description='Simulation tick rate (Hz)'),
         DeclareLaunchArgument('observation_interval', default_value='2.0',              description='Seconds between auto-observations'),
+        DeclareLaunchArgument('memory_budget',        default_value='-1',               description='F4 budget B; -1 = disabled'),
+        DeclareLaunchArgument('f1',                   default_value='true',             description='Enable F1 spreading activation'),
+        DeclareLaunchArgument('f2',                   default_value='true',             description='Enable F2 anticipatory horizon'),
+        DeclareLaunchArgument('f3',                   default_value='true',             description='Enable F3 utility saturation'),
+        DeclareLaunchArgument('f4',                   default_value='true',             description='Enable F4 quadratic cost constraint'),
+        DeclareLaunchArgument('f5',                   default_value='true',             description='Enable F5 epistemic drift'),
+        DeclareLaunchArgument('f6',                   default_value='false',            description='Enable F6 spatial opportunity cost'),
     ]
 
     awareness_node = Node(
@@ -38,14 +45,14 @@ def generate_launch_description() -> LaunchDescription:
             'budget':               LaunchConfiguration('budget'),
             'tick_rate':            LaunchConfiguration('tick_rate'),
             'observation_interval': LaunchConfiguration('observation_interval'),
+            'memory_budget':        LaunchConfiguration('memory_budget'),
+            'f1':                   LaunchConfiguration('f1'),
+            'f2':                   LaunchConfiguration('f2'),
+            'f3':                   LaunchConfiguration('f3'),
+            'f4':                   LaunchConfiguration('f4'),
+            'f5':                   LaunchConfiguration('f5'),
+            'f6':                   LaunchConfiguration('f6'),
         }],
     )
 
-    visualizer = Node(
-        package='awareness_manager',
-        executable='run_pv_inspection_viz',
-        name='pv_inspection_visualizer',
-        output='screen',
-    )
-
-    return LaunchDescription(args + [awareness_node, visualizer])
+    return LaunchDescription(args + [awareness_node])

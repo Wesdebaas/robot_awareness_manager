@@ -29,6 +29,7 @@ setup(
         'console_scripts': [
             'awareness_node             = awareness_manager.ros_node:main',
             'run_evaluation             = evaluation.run_evaluation:main',
+            'run_dashboard              = demos.run_dashboard:main',
         ],
     },
 )
