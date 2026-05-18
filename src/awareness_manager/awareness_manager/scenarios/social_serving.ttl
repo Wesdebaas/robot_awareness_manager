@@ -227,6 +227,7 @@ am:person_01 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "child" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.02"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_02 a am:InstanceConcept ;
@@ -234,6 +235,7 @@ am:person_02 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "child" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.02"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_03 a am:InstanceConcept ;
@@ -241,6 +243,7 @@ am:person_03 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "child" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.02"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_04 a am:InstanceConcept ;
@@ -248,6 +251,7 @@ am:person_04 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "adult" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.03"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_05 a am:InstanceConcept ;
@@ -255,6 +259,7 @@ am:person_05 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "adult" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.03"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_06 a am:InstanceConcept ;
@@ -262,6 +267,7 @@ am:person_06 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "adult" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.03"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_07 a am:InstanceConcept ;
@@ -269,6 +275,7 @@ am:person_07 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "VIP" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.05"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_08 a am:InstanceConcept ;
@@ -276,6 +283,7 @@ am:person_08 a am:InstanceConcept ;
     am:decayRate "0.04"^^xsd:double ; am:classId "VIP" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.05"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_09 a am:InstanceConcept ;
@@ -285,6 +293,7 @@ am:person_09 a am:InstanceConcept ;
     am:classId "VIP" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.05"^^xsd:double ;
     am:zone "table_area" .
 
 am:person_10 a am:InstanceConcept ;
@@ -294,6 +303,7 @@ am:person_10 a am:InstanceConcept ;
     am:classId "VIP" ;
     am:classId "person" ;
     am:observationCost "2.0"^^xsd:double ;
+    am:urgencyRate "0.05"^^xsd:double ;
     am:zone "table_area" .
 
 

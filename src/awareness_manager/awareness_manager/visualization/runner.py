@@ -32,9 +32,10 @@ if TYPE_CHECKING:
     from awareness_manager.visualization.trace_logger import TraceLogger
 
 # Type alias: each history entry is
-#   (elapsed, total_attn, mission, relational, surprise, epistemic_error, prediction_error, ch_anticipatory)
-# Indices 0-4 are read by the sparkline; indices 5-7 are used by flush_trace.
-HistoryEntry = tuple[float, float, float, float, float, float, float, float]
+#   (elapsed, total_attn, mission, relational, surprise, epistemic_error,
+#    prediction_error, ch_anticipatory, priority, max_priority)
+# Indices 0-4: sparkline channels. 5-7: flush_trace. 8-9: priority traces.
+HistoryEntry = tuple[float, float, float, float, float, float, float, float, float, float]
 
 
 class SimulationRunner:
@@ -247,41 +248,50 @@ class SimulationRunner:
 
     def _record_history(self) -> None:
         """
-        Append current attention values to each concept's history deque.
+        Append current state to each concept's history deque.
 
-        Called under the lock after every tick. Stores 8 values per concept:
-        (elapsed, total_attn, mission, relational, surprise,
-         epistemic_error, prediction_error, ch_anticipatory).
+        Called under the lock after every tick. Stores 10 values per concept:
+        (elapsed, total_attn, mission, relational, surprise, epistemic_error,
+         prediction_error, ch_anticipatory, priority, max_priority).
 
-        Indices 0-4 are used by the live sparkline; indices 5-7 are used by
-        flush_trace() to reconstruct full trace records from the buffer.
+        Indices 0-7: attention channels and error signals.
+        Index 8: this concept's scheduling priority (E×A + γ×urgency).
+        Index 9: highest priority across all schedulable concepts this tick
+                 — used as the reference line in the sparkline so you can see
+                 whether the selected concept is near the top of the schedule.
         """
         attn = self._am.attention()
-        ch = self._am.attention_channels()
-        kb = self._am.kb
-        ikb = self._am.instance_kb
+        ch   = self._am.attention_channels()
+        prio = self._am.priorities()
+        kb   = self._am.kb
+        ikb  = self._am.instance_kb
+
+        max_priority = max(prio.values(), default=0.0)
 
         for cid, a in attn.items():
             if cid not in self._history:
                 self._history[cid] = deque(maxlen=self._history_maxlen)
 
-            mission = ch['mission'].get(cid, 0.0) + ch['anticipatory'].get(cid, 0.0)
+            mission    = ch['mission'].get(cid, 0.0) + ch['anticipatory'].get(cid, 0.0)
             relational = ch['relational'].get(cid, 0.0)
-            surprise = ch['surprise'].get(cid, 0.0)
-            ch_an = ch['anticipatory'].get(cid, 0.0)
+            surprise   = ch['surprise'].get(cid, 0.0)
+            ch_an      = ch['anticipatory'].get(cid, 0.0)
 
             if cid in kb.concept_ids():
                 concept = kb.get_concept(cid)
-                e = concept.epistemic_error
+                e  = concept.epistemic_error
                 pe = concept.prediction_error
             elif ikb is not None and cid in ikb.instance_ids():
                 inst = ikb.get_instance(cid)
-                e = inst.epistemic_error
+                e  = inst.epistemic_error
                 pe = inst.prediction_error
             else:
-                e = 0.0
+                e  = 0.0
                 pe = 0.0
 
-            self._history[cid].append(
-                (self._elapsed, a, mission, relational, surprise, e, pe, ch_an)
-            )
+            priority = prio.get(cid, 0.0)
+
+            self._history[cid].append((
+                self._elapsed, a, mission, relational, surprise,
+                e, pe, ch_an, priority, max_priority,
+            ))

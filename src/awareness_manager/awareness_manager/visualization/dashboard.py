@@ -161,6 +161,18 @@ STYLESHEET = [
         "selector": "node[below_threshold=1]",
         "style": {"opacity": 0.12},
     },
+    # Urgency: growing orange-red outer ring on instance nodes.
+    # border-width maps 0→0px, 1→7px so the ring only appears when urgency > 0.
+    # This sits BELOW in_schedule and prediction_error so those overrides still win.
+    {
+        "selector": "node[type='instance'][urgency > 0.0]",
+        "style": {
+            "border-color": "#ff6b35",
+            "border-width": "mapData(urgency, 0, 1, 0, 7)",
+            "border-opacity": "mapData(urgency, 0.05, 1, 0.4, 1.0)",
+            "border-style": "solid",
+        },
+    },
     {
         "selector": "node[in_schedule=1]",
         "style": {
@@ -329,15 +341,21 @@ def _hover_card(data: dict | None) -> html.Div:
 
     node_type  = data.get("type", "-")
     concept_id = data.get("id", "-")
-    a   = data.get("attention", 0.0)
-    e   = data.get("epistemic_error", 0.0)
-    pe  = data.get("prediction_error", 0.0)
-    dr  = data.get("decay_rate", 0.0)
-    sch = data.get("in_schedule", 0)
-    cm  = data.get("ch_mission", 0.0)
-    ca  = data.get("ch_anticipatory", 0.0)
-    cr  = data.get("ch_relational", 0.0)
-    cs  = data.get("ch_surprise", 0.0)
+    a    = data.get("attention", 0.0)
+    e    = data.get("epistemic_error", 0.0)
+    pe   = data.get("prediction_error", 0.0)
+    dr   = data.get("decay_rate", 0.0)
+    u    = data.get("urgency", 0.0)
+    ur   = data.get("urgency_rate", 0.0)
+    uc   = data.get("urgency_contribution", 0.0)
+    p    = data.get("priority", 0.0)
+    rank = data.get("priority_rank", 0)
+    n_sc = data.get("n_schedulable", 0)
+    sch  = data.get("in_schedule", 0)
+    cm   = data.get("ch_mission", 0.0)
+    ca   = data.get("ch_anticipatory", 0.0)
+    cr   = data.get("ch_relational", 0.0)
+    cs   = data.get("ch_surprise", 0.0)
 
     third_key = "Concept type" if node_type == "class" else "Class"
     third_val = (data.get("concept_type", "-") if node_type == "class"
@@ -351,24 +369,68 @@ def _hover_card(data: dict | None) -> html.Div:
                                "font-weight": "bold"}),
         ])
 
-    basic_table = html.Table(
-        [
-            _row("ID",            concept_id),
-            _row("Type",          node_type),
-            _row(third_key,       third_val),
-            _row("Attention  A",  f"{a:.4f}"),
-            _row("Epistemic  E",  f"{e:.4f}"),
-            _row("Pred. error ε", f"{pe:.4f}",
-                 vcolor="#ff8888" if pe > 0.1 else _TEXT),
-            _row("Decay rate δ",  f"{dr:.4f}"),
-            _row("In schedule",   "Yes ◀" if sch else "No",
-                 vcolor="#ffdd00" if sch else _TEXT),
-        ],
+    rank_str = f"#{rank} / {n_sc}" if rank > 0 else f"— / {n_sc}"
+    rank_color = (
+        "#f4c44a" if rank == 1
+        else "#44cc88" if rank <= 3
+        else "#ff6b35" if rank > max(1, n_sc // 2)
+        else _TEXT
+    )
+
+    rows = [
+        _row("ID",            concept_id),
+        _row("Type",          node_type),
+        _row(third_key,       third_val),
+        _row("Priority rank", rank_str, vcolor=rank_color),
+        _row("Priority  P",   f"{p:.4f}",
+             vcolor=_COL_PRIORITY if p > 0 else _DIM),
+        _row("Attention  A",  f"{a:.4f}"),
+        _row("Epistemic  E",  f"{e:.4f}"),
+        _row("Pred. error ε", f"{pe:.4f}",
+             vcolor="#ff8888" if pe > 0.1 else _TEXT),
+        _row("Decay rate δ",  f"{dr:.4f}"),
+        _row("In schedule",   "Yes ◀" if sch else "No",
+             vcolor="#ffdd00" if sch else _TEXT),
+    ]
+    if ur > 0.0:
+        rows.append(_row("Urgency  U",    f"{u:.4f}",
+                         vcolor="#ff6b35" if u > 0.3 else _TEXT))
+        rows.append(_row("Urgency rate",  f"{ur:.4f}"))
+
+    basic_table = html.Table(rows,
         style={"border-collapse": "collapse", "margin-bottom": "8px"},
     )
 
+    def _prio_row(label, val, color, scale=2.0):
+        bar_w = int((val / scale) * (_BAR_W_PX * 0.55))
+        return html.Tr([
+            html.Td(label, style={"font-size": "9px", "color": color,
+                                   "padding": "1px 5px 1px 0",
+                                   "white-space": "nowrap"}),
+            html.Td(f"{val:.4f}", style={"font-size": "9px", "color": _TEXT,
+                                          "font-weight": "bold",
+                                          "padding-right": "5px"}),
+            html.Td(html.Div(style={
+                "width": f"{max(0, bar_w)}px", "height": "6px",
+                "background": color, "opacity": 0.8, "border-radius": "2px",
+            })),
+        ])
+
+    prio_rows = [_prio_row("E × A",  e * a, _COL_PRIORITY)]
+    if ur > 0.0:
+        prio_rows.append(_prio_row("+ urgency", uc, "#ff6b35"))
+    prio_rows.append(_prio_row("= priority", p, _COL_PRIORITY))
+
+    prio_section = html.Div([
+        html.Div("Priority breakdown", style={
+            "font-size": "9px", "color": _DIM,
+            "margin-bottom": "4px", "letter-spacing": "0.05em",
+        }),
+        html.Table(prio_rows, style={"border-collapse": "collapse"}),
+    ], style={"margin-bottom": "8px"})
+
     bar_section = html.Div([
-        html.Div("Activation breakdown", style={
+        html.Div("Attention channels", style={
             "font-size": "9px", "color": _DIM,
             "margin-bottom": "4px", "letter-spacing": "0.05em",
         }),
@@ -392,18 +454,14 @@ def _hover_card(data: dict | None) -> html.Div:
             })),
         ])
 
-    ch_table = html.Table(
-        [
-            _ch_row("mission",      cm,    _COL_MISSION),
-            _ch_row("anticipatory", ca,    _COL_ANTICIPATORY),
-            _ch_row("relational",   cr,    _COL_RELATIONAL),
-            _ch_row("surprise",     cs,    _COL_SURPRISE),
-            _ch_row("E × A",        e * a, _COL_PRIORITY),
-        ],
-        style={"border-collapse": "collapse"},
-    )
+    ch_table = html.Table([
+        _ch_row("mission",      cm, _COL_MISSION),
+        _ch_row("anticipatory", ca, _COL_ANTICIPATORY),
+        _ch_row("relational",   cr, _COL_RELATIONAL),
+        _ch_row("surprise",     cs, _COL_SURPRISE),
+    ], style={"border-collapse": "collapse"})
 
-    return html.Div([basic_table, bar_section, ch_table])
+    return html.Div([basic_table, prio_section, bar_section, ch_table])
 
 
 # ── Sparkline helpers ─────────────────────────────────────────────────────────
@@ -444,13 +502,14 @@ def _make_sparkline(history: list, node_id: str, cursor_t: float | None = None) 
     if not history:
         return _empty_sparkline()
 
-    t  = [h[0] for h in history]
-    a  = [h[1] for h in history]
-    an = [h[7] for h in history]                    # anticipatory only (purple)
-    m  = [h[2] - h[7] for h in history]            # mission-only / F1 (blue)
-    r  = [h[3] for h in history]                   # relational (teal)
-    s  = [h[4] for h in history]                   # surprise (orange)
-    p  = [h[5] * h[1] for h in history]            # E × A priority (golden)
+    t     = [h[0] for h in history]
+    a     = [h[1] for h in history]
+    an    = [h[7] for h in history]                 # anticipatory only (purple)
+    m     = [h[2] - h[7] for h in history]         # mission-only / F1 (blue)
+    r     = [h[3] for h in history]                # relational (teal)
+    s     = [h[4] for h in history]                # surprise (orange)
+    p     = [h[8] for h in history]                # scheduling priority (golden)
+    p_ref = [h[9] for h in history]                # max-priority across all concepts (reference)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t, y=a, fill="tozeroy",
@@ -465,12 +524,15 @@ def _make_sparkline(history: list, node_id: str, cursor_t: float | None = None) 
                              mode="lines", hoverinfo="none"))
     fig.add_trace(go.Scatter(x=t, y=s, line=dict(color=_COL_SURPRISE, width=1.5),
                              mode="lines", hoverinfo="none"))
+    fig.add_trace(go.Scatter(x=t, y=p_ref,
+                             line=dict(color="rgba(255,255,255,0.30)", width=1.0, dash="dash"),
+                             mode="lines", hoverinfo="none"))
     fig.add_trace(go.Scatter(x=t, y=p, line=dict(color=_COL_PRIORITY, width=2.0, dash="dot"),
                              mode="lines", hoverinfo="none"))
 
     layout = dict(
         **_SPARKLINE_LAYOUT,
-        title=dict(text=f"A(t) - {node_id}",
+        title=dict(text=f"P · A(t) — {node_id}",
                    font=dict(size=9, color=_DIM, family="monospace"),
                    x=0.02, xanchor="left", y=0.99, yanchor="top"),
     )
@@ -483,6 +545,7 @@ def _make_sparkline(history: list, node_id: str, cursor_t: float | None = None) 
             "line": {"color": "rgba(255,255,255,0.6)", "width": 1.5, "dash": "dot"},
         }]
     fig.update_layout(**layout)
+    fig.update_yaxes(rangemode="tozero")
     return fig
 
 

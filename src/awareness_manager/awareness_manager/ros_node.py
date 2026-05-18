@@ -296,14 +296,16 @@ class AwarenessNode(Node):
                 cm = ch['mission'].get(class_id, 0.0)
                 ca = ch['anticipatory'].get(class_id, 0.0)
                 state[iid] = {
-                    'E':        round(inst.epistemic_error, 4),
-                    'A':        round(attn.get(iid, 0.0), 4),
-                    'P':        round(prio.get(iid, 0.0), 6),
-                    'ch_m':     round(cm, 4),
-                    'ch_an':    round(ca, 4),
-                    'ch_r':     round(ch['relational'].get(iid, 0.0), 4),
-                    'ch_s':     round(ch['surprise'].get(iid, 0.0), 4),
-                    'presence': inst.presence_state.value,
+                    'E':           round(inst.epistemic_error, 4),
+                    'A':           round(attn.get(iid, 0.0), 4),
+                    'P':           round(prio.get(iid, 0.0), 6),
+                    'ch_m':        round(cm, 4),
+                    'ch_an':       round(ca, 4),
+                    'ch_r':        round(ch['relational'].get(iid, 0.0), 4),
+                    'ch_s':        round(ch['surprise'].get(iid, 0.0), 4),
+                    'presence':    inst.presence_state.value,
+                    'urgency':     round(inst.urgency, 4),
+                    'urgency_rate': inst.urgency_rate,
                 }
         self._pub_state.publish(String(data=json.dumps(state)))
 
@@ -418,6 +420,8 @@ class AwarenessNode(Node):
                 if pid and dc:
                     ctx['gt_has_drink'][pid] = True
                     ikb.get_instance(pid).properties['has_drink'] = True
+                if pid:
+                    self._am.reset_urgency(pid)
                 self._am.set_goal('serve_people_drinks')
                 ctx['state']       = 'monitoring'
                 ctx['target']      = None

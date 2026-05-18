@@ -93,6 +93,15 @@ class InstanceConcept(Concept):
     properties: dict = field(default_factory=dict)  # arbitrary instance metadata
     presence_state: PresenceState = PresenceState.PRESENT
 
+    # Urgency — accumulated unmet-need signal ∈ [0, 1].
+    # Grows proportional to attention: urgency += urgency_rate × A × dt.
+    # This means only attended concepts accumulate urgency (gated by attention);
+    # unrelated instances with A ≈ 0 stay at urgency ≈ 0.
+    # Reset explicitly via AwarenessManager.reset_urgency() when the underlying
+    # need is met (e.g. a person is served a drink in the social serving scenario).
+    urgency: float = 0.0
+    urgency_rate: float = 0.0   # s⁻¹ per unit attention; 0 disables urgency entirely
+
     @property
     def all_class_ids(self) -> list[str]:
         """All class memberships: primary class_id followed by any extra memberships."""

@@ -41,7 +41,7 @@ SELECT ?sourceId ?targetId ?weight WHERE {
 
 _INSTANCES_QUERY = """
 PREFIX am: <http://coresense.eu/awareness/>
-SELECT ?conceptId ?conceptType ?decayRate ?classId ?observationCost ?zone WHERE {
+SELECT ?conceptId ?conceptType ?decayRate ?classId ?observationCost ?zone ?urgencyRate WHERE {
     ?i a am:InstanceConcept ;
        am:conceptId ?conceptId ;
        am:conceptType ?conceptType ;
@@ -49,6 +49,7 @@ SELECT ?conceptId ?conceptType ?decayRate ?classId ?observationCost ?zone WHERE 
        am:classId ?classId .
     OPTIONAL { ?i am:observationCost ?observationCost . }
     OPTIONAL { ?i am:zone ?zone . }
+    OPTIONAL { ?i am:urgencyRate ?urgencyRate . }
 }
 """
 
@@ -139,6 +140,8 @@ def load_instance_kb_from_ttl(ttl_path: Path) -> InstanceKnowledgeBase:
                 'class_ids':       [],
                 'observation_cost': float(sol['observationCost'].value)
                                    if sol['observationCost'] is not None else 1.0,
+                'urgency_rate':    float(sol['urgencyRate'].value)
+                                   if sol['urgencyRate'] is not None else 0.0,
             }
         raw[cid]['class_ids'].append(sol['classId'].value)
 
@@ -151,6 +154,7 @@ def load_instance_kb_from_ttl(ttl_path: Path) -> InstanceKnowledgeBase:
             class_id=class_ids[0],
             extra_class_ids=class_ids[1:],
             observation_cost=d['observation_cost'],
+            urgency_rate=d['urgency_rate'],
         ))
 
     for sol in store.query(_INSTANCE_EDGES_QUERY):

@@ -121,6 +121,13 @@ class RosStateSource:
         schedule_set = set(schedule)
         elements: list[dict] = []
 
+        # Compute priority rank across all concepts
+        gamma = 1.0  # urgency_weight not exposed over ROS; use default
+        all_prios = [(state.get(n, {}).get('P', 0.0), n) for n in state]
+        positive_prios = sorted([(p, n) for p, n in all_prios if p > 0], reverse=True)
+        n_schedulable = len(positive_prios)
+        rank_lookup: dict[str, int] = {n: i + 1 for i, (_, n) in enumerate(positive_prios)}
+
         # Class nodes
         for c in self._structure['classes']:
             cid  = c['id']
@@ -132,27 +139,33 @@ class RosStateSource:
             ch_an = vals.get('ch_an', 0.0)
             ch_r = vals.get('ch_r', 0.0)
             ch_s = vals.get('ch_s', 0.0)
+            p    = vals.get('P', 0.0)
             pos  = self._positions.get(cid, {'x': 0.0, 'y': 0.0})
 
             elements.append({
                 'data': {
-                    'id':               cid,
-                    'label':            f"{cid}\nA={a:.2f}  E={e:.2f}",
-                    'type':             'class',
-                    'concept_type':     meta.get('concept_type', 'object'),
-                    'attention':        round(a, 4),
-                    'epistemic_error':  round(e, 4),
-                    'prediction_error': 0.0,
-                    'decay_rate':       meta.get('decay_rate', 0.0),
-                    'in_schedule':      1 if cid in schedule_set else 0,
-                    'below_threshold':  1 if a < threshold else 0,
-                    'is_active_goal':   1 if cid == goal else 0,
-                    'has_instances':    1 if cid in self._populated_classes else 0,
-                    'ch_mission':       round(ch_m, 4),
-                    'ch_anticipatory':  round(ch_an, 4),
-                    'ch_relational':    round(ch_r, 4),
-                    'ch_surprise':      round(ch_s, 4),
-                    'color':            channel_color(ch_m, ch_an, ch_r, ch_s, e),
+                    'id':                   cid,
+                    'label':                f"{cid}\nA={a:.2f}  E={e:.2f}",
+                    'type':                 'class',
+                    'concept_type':         meta.get('concept_type', 'object'),
+                    'attention':            round(a, 4),
+                    'epistemic_error':      round(e, 4),
+                    'prediction_error':     0.0,
+                    'decay_rate':           meta.get('decay_rate', 0.0),
+                    'urgency':              0.0,
+                    'urgency_contribution': 0.0,
+                    'priority':             round(p, 4),
+                    'priority_rank':        rank_lookup.get(cid, 0),
+                    'n_schedulable':        n_schedulable,
+                    'in_schedule':          1 if cid in schedule_set else 0,
+                    'below_threshold':      1 if a < threshold else 0,
+                    'is_active_goal':       1 if cid == goal else 0,
+                    'has_instances':        1 if cid in self._populated_classes else 0,
+                    'ch_mission':           round(ch_m, 4),
+                    'ch_anticipatory':      round(ch_an, 4),
+                    'ch_relational':        round(ch_r, 4),
+                    'ch_surprise':          round(ch_s, 4),
+                    'color':                channel_color(ch_m, ch_an, ch_r, ch_s, e),
                 },
                 'position': pos,
             })
@@ -164,32 +177,46 @@ class RosStateSource:
             vals = state.get(iid, {})
             a    = vals.get('A', 0.0)
             e    = vals.get('E', 0.0)
-            ch_m = vals.get('ch_m', 0.0)
+            ch_m  = vals.get('ch_m', 0.0)
             ch_an = vals.get('ch_an', 0.0)
-            ch_r = vals.get('ch_r', 0.0)
-            ch_s = vals.get('ch_s', 0.0)
-            pos  = self._positions.get(iid, {'x': 0.0, 'y': 0.0})
+            ch_r  = vals.get('ch_r', 0.0)
+            ch_s  = vals.get('ch_s', 0.0)
+            u     = vals.get('urgency', 0.0)
+            ur    = vals.get('urgency_rate', 0.0)
+            p     = vals.get('P', 0.0)
+            uc    = round(gamma * u, 4)
+            pos   = self._positions.get(iid, {'x': 0.0, 'y': 0.0})
+
+            label = f"{iid}\nA={a:.2f}  E={e:.2f}"
+            if u > 0.05:
+                label += f"\nU={u:.2f}"
 
             elements.append({
                 'data': {
-                    'id':               iid,
-                    'label':            f"{iid}\nA={a:.2f}\nE={e:.2f}",
-                    'parent':           meta.get('class_id', ''),
-                    'type':             'instance',
-                    'class_id':         meta.get('class_id', ''),
-                    'attention':        round(a, 4),
-                    'epistemic_error':  round(e, 4),
-                    'prediction_error': 0.0,
-                    'decay_rate':       meta.get('decay_rate', 0.0),
-                    'in_schedule':      1 if iid in schedule_set else 0,
-                    'below_threshold':  1 if a < threshold else 0,
-                    'is_active_goal':   0,
-                    'has_instances':    0,
-                    'ch_mission':       round(ch_m, 4),
-                    'ch_anticipatory':  round(ch_an, 4),
-                    'ch_relational':    round(ch_r, 4),
-                    'ch_surprise':      round(ch_s, 4),
-                    'color':            channel_color(ch_m, ch_an, ch_r, ch_s, e),
+                    'id':                   iid,
+                    'label':                label,
+                    'parent':               meta.get('class_id', ''),
+                    'type':                 'instance',
+                    'class_id':             meta.get('class_id', ''),
+                    'attention':            round(a, 4),
+                    'epistemic_error':      round(e, 4),
+                    'prediction_error':     0.0,
+                    'urgency':              round(u, 4),
+                    'urgency_rate':         ur,
+                    'urgency_contribution': uc,
+                    'priority':             round(p, 4),
+                    'priority_rank':        rank_lookup.get(iid, 0),
+                    'n_schedulable':        n_schedulable,
+                    'decay_rate':           meta.get('decay_rate', 0.0),
+                    'in_schedule':          1 if iid in schedule_set else 0,
+                    'below_threshold':      1 if a < threshold else 0,
+                    'is_active_goal':       0,
+                    'has_instances':        0,
+                    'ch_mission':           round(ch_m, 4),
+                    'ch_anticipatory':      round(ch_an, 4),
+                    'ch_relational':        round(ch_r, 4),
+                    'ch_surprise':          round(ch_s, 4),
+                    'color':                channel_color(ch_m, ch_an, ch_r, ch_s, e),
                 },
                 'position': pos,
             })
@@ -300,6 +327,7 @@ class RosStateSource:
 
     def _update_history(self, state: dict, elapsed: float) -> None:
         """Append one history entry per concept. Called under lock."""
+        max_priority = max((v.get('P', 0.0) for v in state.values()), default=0.0)
         for cid, vals in state.items():
             if cid not in self._history:
                 self._history[cid] = deque(maxlen=self._history_maxlen)
@@ -309,10 +337,12 @@ class RosStateSource:
             ch_an = vals.get('ch_an', 0.0)
             ch_r  = vals.get('ch_r', 0.0)
             ch_s  = vals.get('ch_s', 0.0)
+            prio  = vals.get('P', 0.0)
             # History entry: (elapsed, total_attn, mission, relational, surprise,
-            #                 epistemic_error, prediction_error, ch_anticipatory)
+            #                 epistemic_error, prediction_error, ch_anticipatory,
+            #                 priority, max_priority)
             self._history[cid].append(
-                (elapsed, a, ch_m, ch_r, ch_s, e, 0.0, ch_an)
+                (elapsed, a, ch_m, ch_r, ch_s, e, 0.0, ch_an, prio, max_priority)
             )
 
 

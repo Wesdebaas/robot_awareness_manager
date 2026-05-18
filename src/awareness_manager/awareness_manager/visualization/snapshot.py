@@ -259,13 +259,23 @@ def get_snapshot(
         is_active_goal   - 1 if this node is the current active goal (*)
         has_instances    - 1 if this class node has ≥1 instance (*)
     """
-    kb = am.kb
+    kb  = am.kb
     ikb = am.instance_kb
     attn = am.attention()
-    ch = am.attention_channels()
+    ch   = am.attention_channels()
+    prio = am.priorities()
     schedule_set = set(schedule)
-    active_goal = am.goal_id
-    queued_ids = {gid for gid, _, _ in am.mission_queue}
+    active_goal  = am.goal_id
+    queued_ids   = {gid for gid, _, _ in am.mission_queue}
+    gamma        = getattr(am, 'urgency_weight', 1.0)
+
+    # Priority ranking: rank 1 = highest priority among all schedulable concepts.
+    positive_prios = sorted(
+        [(p, cid) for cid, p in prio.items() if p > 0],
+        reverse=True,
+    )
+    n_schedulable = len(positive_prios)
+    _rank_lookup: dict[str, int] = {cid: i + 1 for i, (_, cid) in enumerate(positive_prios)}
 
     # Classes that have at least one instance (for empty-container de-emphasis)
     populated_classes: set[str] = set()
@@ -301,6 +311,11 @@ def get_snapshot(
                 "epistemic_error": round(e, 4),
                 "prediction_error": round(pe, 4),
                 "decay_rate": concept.decay_rate,
+                "urgency": 0.0,
+                "urgency_contribution": 0.0,
+                "priority": round(prio.get(cid, 0.0), 4),
+                "priority_rank": _rank_lookup.get(cid, 0),
+                "n_schedulable": n_schedulable,
                 "in_schedule": 1 if cid in schedule_set else 0,
                 "below_threshold": 1 if a < threshold else 0,
                 "is_active_goal": 1 if cid == active_goal else 0,
@@ -321,6 +336,7 @@ def get_snapshot(
             a = attn.get(iid, 0.0)
             e = inst.epistemic_error
             pe = inst.prediction_error
+            u = inst.urgency
             pos = positions.get(iid, {"x": 0.0, "y": 0.0})
 
             # Instance mission = class-gate baseline (F1 of class + F2 of class)
@@ -329,7 +345,9 @@ def get_snapshot(
             cr = ch['relational'].get(iid, 0.0)
             cs = ch['surprise'].get(iid, 0.0)
 
-            label = f"{iid}\nA={a:.2f}\nE={e:.2f}"
+            label = f"{iid}\nA={a:.2f}  E={e:.2f}"
+            if u > 0.05:
+                label += f"\nU={u:.2f}"
 
             elements.append({
                 "data": {
@@ -341,7 +359,13 @@ def get_snapshot(
                     "attention": round(a, 4),
                     "epistemic_error": round(e, 4),
                     "prediction_error": round(pe, 4),
+                    "urgency": round(u, 4),
+                    "urgency_contribution": round(gamma * u, 4),
+                    "priority": round(prio.get(iid, 0.0), 4),
+                    "priority_rank": _rank_lookup.get(iid, 0),
+                    "n_schedulable": n_schedulable,
                     "decay_rate": inst.decay_rate,
+                    "urgency_rate": inst.urgency_rate,
                     "in_schedule": 1 if iid in schedule_set else 0,
                     "below_threshold": 1 if a < threshold else 0,
                     "is_active_goal": 0,

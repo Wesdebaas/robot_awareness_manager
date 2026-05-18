@@ -85,6 +85,7 @@ class AwarenessManager:
         feature_config: FeatureConfig | None = None,
         zone_assignment: dict[str, str] | None = None,
         zone_travel_times: dict[tuple[str, str], float] | None = None,
+        urgency_weight: float = 1.0,
     ) -> None:
         """
         Args:
@@ -140,6 +141,10 @@ class AwarenessManager:
             zone_travel_times:         Dict mapping (zone_a, zone_b) → seconds.
                                        Symmetric lookup is tried automatically.
                                        Only used when feature_config.f6 is True.
+            urgency_weight:            Weight γ for the urgency term in the priority
+                                       formula: priority = E×A + γ×urgency.
+                                       Default 1.0 makes urgency contribute equally to
+                                       E×A. Set to 0.0 to disable urgency entirely.
         """
         if goal_id not in kb.concept_ids():
             raise ValueError(f"Goal concept '{goal_id}' not in knowledge base.")
@@ -160,6 +165,7 @@ class AwarenessManager:
         self._fc = feature_config if feature_config is not None else FeatureConfig()
         self._zone_assignment = zone_assignment or {}
         self._zone_travel_times = zone_travel_times or {}
+        self._urgency_weight = urgency_weight
         self._robot_pos: str | None = None
         self._attention: dict[str, float] = {}
 
@@ -301,7 +307,9 @@ class AwarenessManager:
         self._robot_pos = robot_pos
         self._kb.tick(dt)
         if self._instance_kb is not None:
-            self._instance_kb.tick(dt)
+            # Pass last tick's attention so urgency only accumulates for concepts
+            # the AM was already attending to (gated by A from the previous cycle).
+            self._instance_kb.tick(dt, instance_attention=self._attention)
             self._kb.update_derived_class_errors(self._instance_kb)
         self._advance_mission_queue(dt)
         self._recompute_attention()
@@ -502,12 +510,19 @@ class AwarenessManager:
         """
         τ = self._certainty_threshold
         use_f5 = self._fc.use_f5_epistemic_drift
+        γ = self._urgency_weight
 
-        def _priority(e: float, a: float) -> float:
+        def _priority(e: float, a: float, urgency: float = 0.0) -> float:
+            # Priority = E×A (epistemic-error-weighted attention) + γ×urgency.
+            # Urgency is an independent additive dimension: an instance with high
+            # unmet-need urgency rises in the schedule even if E×A is modest.
+            # When F5 is off, drift is frozen so E stays constant; urgency still
+            # accumulates and contributes so the schedule remains meaningful.
             if use_f5:
-                return e * a if e > τ else 0.0
-            # F5 OFF: drift frozen → schedule by attention alone, no entropy weighting.
-            return a
+                base = e * a if e > τ else 0.0
+            else:
+                base = a
+            return base + γ * urgency
 
         result = {
             cid: _priority(
@@ -519,7 +534,7 @@ class AwarenessManager:
         if self._instance_kb is not None:
             for iid in self._instance_kb.active_instance_ids():
                 inst = self._instance_kb.get_instance(iid)
-                p = _priority(inst.epistemic_error, self._attention.get(iid, 0.0))
+                p = _priority(inst.epistemic_error, self._attention.get(iid, 0.0), inst.urgency)
                 if inst.presence_state == PresenceState.SUSPECTED_ABSENT:
                     p *= self._suspected_absent_priority_scale
                 result[iid] = p
@@ -586,6 +601,20 @@ class AwarenessManager:
         """Mark an instance as CONFIRMED_ABSENT (removed from scheduling)."""
         self._require_instance_kb().confirm_absent(instance_id)
 
+    def reset_urgency(self, instance_id: str) -> None:
+        """Reset the urgency signal for one instance to 0.
+
+        Call this when the underlying need has been met — e.g. when the robot
+        delivers a drink to a person. Intentionally separate from observe():
+        checking on a concept does not satisfy its need.
+        """
+        self._require_instance_kb().reset_urgency(instance_id)
+
+    @property
+    def urgency_weight(self) -> float:
+        """Weight γ applied to urgency in the priority formula (E×A + γ×urgency)."""
+        return self._urgency_weight
+
     @property
     def kb(self) -> KnowledgeBase:
         """The class-level knowledge base."""
@@ -636,6 +665,7 @@ class AwarenessManager:
             "memory_budget": self._memory_budget,
             "instance_relational_weight": self._instance_relational_weight,
             "suspected_absent_priority_scale": self._suspected_absent_priority_scale,
+            "urgency_weight": self._urgency_weight,
             "feature_config": {
                 "f1": self._fc.use_f1_spreading_activation,
                 "f2": self._fc.use_f2_anticipatory_horizon,

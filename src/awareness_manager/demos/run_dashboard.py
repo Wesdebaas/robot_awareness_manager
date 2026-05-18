@@ -48,6 +48,9 @@ Flags:
 import argparse
 import datetime
 import random
+import signal
+import socket
+import subprocess
 from pathlib import Path
 
 
@@ -259,6 +262,8 @@ def _make_ss_controller_hook(seed: int = 42):
                 else:
                     # Preferred drink unavailable — give up this serve
                     pass
+                if pid and hasattr(strategy, 'reset_urgency'):
+                    strategy.reset_urgency(pid)
                 strategy.set_goal('serve_people_drinks')
                 ctx['state']       = 'monitoring'
                 ctx['target']      = None
@@ -471,6 +476,49 @@ def _build_replay(path_str: str):
     return reader
 
 
+def _free_port(port: int, timeout: float = 3.0) -> None:
+    """Kill any process bound to *port* and wait until it is released."""
+    import os
+    import time
+
+    def _is_bound() -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            return s.connect_ex(('127.0.0.1', port)) == 0
+
+    if not _is_bound():
+        return
+
+    # Try fuser -k (Linux standard; sends SIGKILL and waits)
+    try:
+        subprocess.run(['fuser', '-k', f'{port}/tcp'],
+                       capture_output=True, timeout=2.0)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: lsof → SIGKILL
+    try:
+        result = subprocess.run(
+            ['lsof', '-ti', f'TCP:{port}', '-sTCP:LISTEN'],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        for pid_str in result.stdout.strip().split():
+            try:
+                os.kill(int(pid_str), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Poll until the port is actually free
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _is_bound():
+            return
+        time.sleep(0.1)
+    print(f"[warning] port {port} still in use after {timeout:.0f}s — Dash may fail to bind")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Awareness Manager Dashboard")
     parser.add_argument(
@@ -511,6 +559,7 @@ def main() -> None:
 
     from awareness_manager.visualization.dashboard import run
 
+    _free_port(args.port)
     print("=" * 60)
     source_b = None
     scenario = args.scenario

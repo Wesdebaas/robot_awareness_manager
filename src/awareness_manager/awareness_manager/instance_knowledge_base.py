@@ -253,21 +253,51 @@ class InstanceKnowledgeBase:
         ))
         instance.last_updated = time.time()
 
-    def tick(self, dt: float, apply_drift: bool = True) -> None:
+    def tick(
+        self,
+        dt: float,
+        apply_drift: bool = True,
+        instance_attention: dict[str, float] | None = None,
+    ) -> None:
         """
-        Advance time by dt seconds, applying passive drift to all instances.
+        Advance time by dt seconds, applying passive drift and urgency growth.
 
         Mirrors KnowledgeBase.tick() but for instance nodes.
         When apply_drift is False (F5 OFF baseline), epistemic error is frozen.
+
+        Args:
+            dt:                 Elapsed simulated seconds.
+            apply_drift:        When False, epistemic error drift is skipped (F5 OFF).
+            instance_attention: Attention values from the previous tick, used to gate
+                                urgency growth. Urgency only accumulates for attended
+                                concepts (A > 0), so unrelated instances stay at 0.
+                                When None, urgency is not updated.
         """
-        if not apply_drift:
-            return
         for instance in self._instances.values():
             if instance.presence_state == PresenceState.CONFIRMED_ABSENT:
-                continue  # no longer in the world; don't accumulate drift
-            instance.epistemic_error = min(1.0,
-                instance.epistemic_error + instance.decay_rate * dt
-            )
+                continue  # no longer in the world; don't accumulate drift or urgency
+            if apply_drift:
+                instance.epistemic_error = min(1.0,
+                    instance.epistemic_error + instance.decay_rate * dt
+                )
+            # Urgency: grows proportional to attention × urgency_rate × dt.
+            if instance.urgency_rate > 0.0 and instance_attention is not None:
+                a = instance_attention.get(instance.concept_id, 0.0)
+                instance.urgency = min(1.0,
+                    instance.urgency + instance.urgency_rate * a * dt
+                )
+
+    def reset_urgency(self, instance_id: str) -> None:
+        """Reset the urgency signal for one instance to 0.
+
+        Call this when the underlying need has been met — e.g. when the robot
+        delivers a drink to a person in the social serving scenario.
+        This is intentionally separate from refresh_instance() (which only
+        reduces epistemic error): observing a concept does not satisfy its need.
+        """
+        if instance_id not in self._instances:
+            raise ValueError(f"Instance '{instance_id}' not in InstanceKnowledgeBase.")
+        self._instances[instance_id].urgency = 0.0
 
     # ------------------------------------------------------------------
     # Accessors
