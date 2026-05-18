@@ -182,7 +182,7 @@ python3 -m pytest src/awareness_manager/test/ -v
 
 ---
 
-## ROS 2 Node
+## ROS 2 Node (Social Serving)
 
 After colcon build + source (Option A above):
 
@@ -195,3 +195,70 @@ Or with a launch file:
 ```bash
 ros2 launch awareness_manager awareness_demo.launch.py
 ```
+
+---
+
+## Find My Book — Full Gazebo Simulation
+
+A domestic robot navigates the KRR_Course_Small_house world and must locate a book.
+The AM pre-tunes awareness for room-specific book locations as the robot moves,
+demonstrating F1 (spreading activation), F2 (anticipatory pre-tuning on nav goals),
+F5 (epistemic error drives room priority), and F6 (spatial opportunity cost).
+
+### Additional prerequisites
+
+| Requirement | Notes |
+|---|---|
+| Gazebo 11 | `sudo apt install gazebo` |
+| `robocup_home_simulation` | cloned into `src/` — provides the house world + book props |
+| `mirte-gazebo` | cloned into `src/` — MIRTE Master robot and spawn launch |
+| `mirte_navigation` | cloned into `src/` — Nav2 params and map for the house world |
+| `plasys_house_world` / `aws_robomaker_small_house_world` | ROS package dependencies of the world |
+
+### Build
+
+```bash
+colcon build --packages-select \
+    awareness_manager robocup_home_simulation mirte_navigation \
+    --symlink-install
+source install/setup.bash
+```
+
+### Launch
+
+```bash
+ros2 launch awareness_manager book_finding.launch.py
+```
+
+Optional arguments:
+
+```bash
+ros2 launch awareness_manager book_finding.launch.py \
+    budget:=3 tick_rate:=10.0 observation_interval:=5.0 \
+    alpha:=0.5 nav_eta:=15.0 f6:=true
+```
+
+### What to expect
+
+After ~10 seconds the Gazebo window opens with the house world, and the MIRTE robot
+appears inside. RViz shows the map and robot pose. Nav2 activates and AMCL localises
+the robot using the LiDAR.
+
+The robot does **not** move autonomously — use RViz's **"2D Nav Goal"** button to send
+it to a room. When a goal is published:
+
+- `book_finding_node` infers the target room from the goal coordinates
+- Queues the corresponding book instance with an ETA for F2 anticipatory pre-tuning
+- The AM raises priority for book-related concepts in that room before the robot arrives
+
+When the robot enters a new room, it immediately observes the book there, reducing its
+epistemic error.
+
+### Topics published by BookFindingNode
+
+| Topic | Type | Content |
+|---|---|---|
+| `awareness/state` | `std_msgs/String` (JSON) | Per-concept A, E, P values and channel breakdown |
+| `awareness/schedule` | `std_msgs/String` (JSON) | Ordered list of concept IDs to observe this tick |
+| `awareness/goal` | `std_msgs/String` | Active goal ID |
+| `awareness/controller_state` | `std_msgs/String` (JSON) | Current zone, found_book, top-3 schedule |

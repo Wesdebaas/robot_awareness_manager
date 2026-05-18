@@ -1,3 +1,4 @@
+from glob import glob
 from setuptools import find_packages, setup
 
 package_name = 'awareness_manager'
@@ -13,7 +14,11 @@ setup(
         ('share/' + package_name + '/launch', [
             'launch/awareness_demo.launch.py',
             'launch/pv_inspection_demo.launch.py',
+            'launch/book_finding.launch.py',
         ]),
+        # Gazebo model for book_finding scenario
+        ('share/' + package_name + '/models/book',
+            glob('awareness_manager/scenarios/models/book/*')),
     ],
     package_data={
         'awareness_manager.scenarios': ['*.ttl'],
@@ -28,6 +33,7 @@ setup(
     entry_points={
         'console_scripts': [
             'awareness_node             = awareness_manager.ros_node:main',
+            'book_finding_node          = awareness_manager.book_finding_node:main',
             'run_evaluation             = evaluation.run_evaluation:main',
             'run_dashboard              = demos.run_dashboard:main',
         ],
