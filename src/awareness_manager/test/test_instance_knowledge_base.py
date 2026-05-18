@@ -17,10 +17,6 @@ from awareness_manager.awareness_manager import AwarenessManager
 from awareness_manager.concept import Concept, InstanceConcept
 from awareness_manager.instance_knowledge_base import InstanceKnowledgeBase
 from awareness_manager.knowledge_base import KnowledgeBase
-from awareness_manager.scenarios.birdhouse import (
-    build_birdhouse_instance_kb,
-    build_birdhouse_kb,
-)
 from awareness_manager.scenarios.pv_inspection import (
     build_pv_inspection_instance_kb,
     build_pv_inspection_kb,
@@ -52,8 +48,8 @@ def _simple_instance_kb() -> InstanceKnowledgeBase:
         tool_a_inst_1 --locatedAt--> tool_a_inst_2  (weight 1.0)
     """
     ikb = InstanceKnowledgeBase()
-    ikb.add_instance(InstanceConcept('tool_a_inst_1', 'object', decay_rate=0.1, class_id='tool_a'))
-    ikb.add_instance(InstanceConcept('tool_a_inst_2', 'object', decay_rate=0.1, class_id='tool_a'))
+    ikb.add_instance(InstanceConcept('tool_a_inst_1', 'object', decay_rate=0.1,  class_id='tool_a'))
+    ikb.add_instance(InstanceConcept('tool_a_inst_2', 'object', decay_rate=0.1,  class_id='tool_a'))
     ikb.add_instance(InstanceConcept('tool_b_inst_1', 'object', decay_rate=0.05, class_id='tool_b'))
     ikb.add_instance(InstanceConcept('isolated_inst', 'object', decay_rate=0.05, class_id='tool_a'))
     ikb.add_instance_relation('tool_a_inst_1', 'tool_a_inst_2', weight=1.0, relation_type='locatedAt')
@@ -93,13 +89,9 @@ class TestInstanceKBConstruction:
         assert ikb.get_relation_type('a', 'b') == 'heldBy'
 
     def test_instances_of_class(self):
-        ikb = build_birdhouse_instance_kb()
-        hammer_instances = ikb.instances_of_class('hammer')
-        assert set(hammer_instances) == {'hammer_rack', 'hammer_bench'}
-
-    def test_birdhouse_instance_kb_loads(self):
-        ikb = build_birdhouse_instance_kb()
-        assert len(ikb) == 9  # 2 hammers + 2 workbenches + 2 hands + 1 nail + 2 planks
+        ikb = _simple_instance_kb()
+        instances = ikb.instances_of_class('tool_a')
+        assert set(instances) == {'tool_a_inst_1', 'tool_a_inst_2', 'isolated_inst'}
 
     def test_pv_inspection_instance_kb_loads(self):
         ikb = build_pv_inspection_instance_kb()
@@ -120,11 +112,9 @@ class TestClassGate:
         class_attn = {'task': 1.0, 'tool_a': 0.5}
         instance_attn = ikb.compute_instance_attention(class_attn, alpha=0.5)
         # tool_b_inst_1 should get 0 base (no class gate) and 0 relational boost
-        # (tool_b_inst_1 is not connected to any tool_a instance)
         assert instance_attn['tool_b_inst_1'] == pytest.approx(0.0)
 
     def test_instance_inherits_class_attention(self):
-        # When class 'tool_a' has attention 0.5, its instances should inherit 0.5 base
         kb = _simple_class_kb()
         ikb = _simple_instance_kb()
         class_attn = {'task': 1.0, 'tool_a': 0.5}
@@ -137,11 +127,8 @@ class TestClassGate:
         assert instance_attn['isolated_inst']  == pytest.approx(0.5)
 
     def test_higher_class_attention_gives_higher_instance_attention(self):
-        # tool_a (class attn=0.5) vs tool_b (class attn=0.125)
-        # instances of tool_a should have higher attention than tool_b
         kb = _simple_class_kb()
         ikb = _simple_instance_kb()
-        # Both gates open
         class_attn = {'task': 1.0, 'tool_a': 0.5, 'tool_b': 0.125}
         instance_attn = ikb.compute_instance_attention(
             class_attn, alpha=0.5, instance_relational_weight=0.0
@@ -163,23 +150,12 @@ class TestClassGate:
 class TestRelationalBoost:
 
     def test_relational_boost_adds_to_base(self):
-        # tool_a_inst_2 is linked to tool_a_inst_1.
-        # With tool_a class attention = 0.5, tool_a_inst_2 gets base 0.5.
-        # The relational boost from tool_a_inst_1 (same class) adds a small extra.
-        # But tool_b_inst_1 is not linked at all, so it gets only its class gate.
         ikb = _simple_instance_kb()
         class_attn = {'tool_a': 0.5, 'tool_b': 0.2}
         attn_with_boost = ikb.compute_instance_attention(
             class_attn, alpha=0.5, instance_relational_weight=0.3
         )
-        attn_no_boost = ikb.compute_instance_attention(
-            class_attn, alpha=0.5, instance_relational_weight=0.0
-        )
-        # tool_a_inst_2 can receive relational spread from tool_a_inst_1 (same seed pool)
-        # but since they're in the same class, the max contribution from the seed is
-        # the same as base. Relational boost only adds if the seed is different.
-        # Here both instances are seeds with same weight, so no extra boost expected.
-        # However, tool_b_inst_1 is linked to NO seed, so it stays at base.
+        # tool_b_inst_1 has no relational connections; stays at class gate
         assert attn_with_boost['tool_b_inst_1'] == pytest.approx(0.2)
 
     def test_instance_linked_to_relevant_class_gets_relational_boost(self):
@@ -221,8 +197,6 @@ class TestRelationalBoost:
         class_attn = {'relevant': 0.8}
         attn = ikb.compute_instance_attention(class_attn, alpha=0.5, instance_relational_weight=1.0)
 
-        # close: distance=1 → boost = 0.8 * 0.5^1 = 0.4
-        # far:   distance=2 → boost = 0.8 * 0.5^2 = 0.2
         assert attn['close'] > attn['far']
         assert attn['close'] == pytest.approx(0.8 * 0.5 ** 1)
         assert attn['far']   == pytest.approx(0.8 * 0.5 ** 2)
@@ -238,7 +212,6 @@ class TestRelationalBoost:
         attn = ikb.compute_instance_attention(
             class_attn, alpha=0.5, max_distance=4.0, instance_relational_weight=1.0
         )
-        # too_far is beyond max_distance=4.0 → no relational boost, no class gate
         assert attn['too_far'] == pytest.approx(0.0)
 
 
@@ -249,37 +222,37 @@ class TestRelationalBoost:
 class TestInstanceEpistemicError:
 
     def test_tick_increases_instance_error(self):
-        ikb = build_birdhouse_instance_kb()
-        before = ikb.get_instance('alice_hand').epistemic_error
+        ikb = _simple_instance_kb()
+        before = ikb.get_instance('tool_a_inst_1').epistemic_error
         ikb.tick(dt=5.0)
-        after = ikb.get_instance('alice_hand').epistemic_error
+        after = ikb.get_instance('tool_a_inst_1').epistemic_error
         assert after > before
 
     def test_tick_proportional_to_decay_rate(self):
-        ikb = build_birdhouse_instance_kb()
+        ikb = _simple_instance_kb()
         ikb.tick(dt=10.0)
-        # alice_hand (δ=0.1) decays faster than workbench_north (δ=0.001)
-        assert (ikb.get_instance('alice_hand').epistemic_error >
-                ikb.get_instance('workbench_north').epistemic_error)
+        # tool_a_inst_1 (δ=0.1) decays faster than tool_b_inst_1 (δ=0.05)
+        assert (ikb.get_instance('tool_a_inst_1').epistemic_error >
+                ikb.get_instance('tool_b_inst_1').epistemic_error)
 
     def test_epistemic_error_clamped_at_one(self):
-        ikb = build_birdhouse_instance_kb()
+        ikb = _simple_instance_kb()
         ikb.tick(dt=100_000.0)
-        assert ikb.get_instance('alice_hand').epistemic_error == pytest.approx(1.0)
+        assert ikb.get_instance('tool_a_inst_1').epistemic_error == pytest.approx(1.0)
 
     def test_refresh_reduces_instance_error(self):
-        ikb = build_birdhouse_instance_kb()
+        ikb = _simple_instance_kb()
         ikb.tick(dt=10.0)
-        before = ikb.get_instance('hammer_bench').epistemic_error
-        ikb.refresh_instance('hammer_bench', refresh=0.5)
-        after = ikb.get_instance('hammer_bench').epistemic_error
+        before = ikb.get_instance('tool_a_inst_1').epistemic_error
+        ikb.refresh_instance('tool_a_inst_1', refresh=0.5)
+        after = ikb.get_instance('tool_a_inst_1').epistemic_error
         assert after < before
 
     def test_epistemic_error_not_below_zero(self):
-        ikb = build_birdhouse_instance_kb()
+        ikb = _simple_instance_kb()
         # Large refresh on a fresh instance should not go negative
-        ikb.refresh_instance('hammer_bench', refresh=1.0)
-        assert ikb.get_instance('hammer_bench').epistemic_error >= 0.0
+        ikb.refresh_instance('tool_a_inst_1', refresh=1.0)
+        assert ikb.get_instance('tool_a_inst_1').epistemic_error >= 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -290,26 +263,22 @@ class TestAwarenessManagerWithInstances:
 
     def test_instance_in_schedule_when_kb_attached(self):
         # After ticking, instances of relevant classes should appear in the schedule
-        kb = build_birdhouse_kb()
-        ikb = build_birdhouse_instance_kb()
-        am = AwarenessManager(kb, 'build_birdhouse', budget=10, instance_kb=ikb)
+        kb = _simple_class_kb()
+        ikb = _simple_instance_kb()
+        am = AwarenessManager(kb, 'task', budget=10, instance_kb=ikb)
         am.tick(dt=100.0)  # drive epistemic errors up
         schedule = am.tick(dt=0.0)
-        # Schedule should contain at least one instance
         instance_ids = set(ikb.instance_ids())
         assert any(s in instance_ids for s in schedule), \
             f"Expected at least one instance in schedule, got: {schedule}"
 
     def test_instance_of_irrelevant_class_not_scheduled(self):
         # Create a KB where 'irrelevant_class' has no connection to the goal.
-        # Instances of that class should have zero priority and be excluded
-        # from the schedule when budget is tight.
         kb = KnowledgeBase()
         kb.add_concept(Concept('goal',             'task',   decay_rate=0.0))
         kb.add_concept(Concept('relevant_class',   'object', decay_rate=0.1))
         kb.add_concept(Concept('irrelevant_class', 'object', decay_rate=0.1))
         kb.add_relation('goal', 'relevant_class', weight=1.0)
-        # irrelevant_class is not connected to goal at all
 
         ikb = InstanceKnowledgeBase()
         ikb.add_instance(InstanceConcept('relevant_inst',   'object', decay_rate=0.1,
@@ -317,71 +286,64 @@ class TestAwarenessManagerWithInstances:
         ikb.add_instance(InstanceConcept('irrelevant_inst', 'object', decay_rate=0.1,
                                          class_id='irrelevant_class'))
 
-        # budget=2: only the two non-zero-priority items should be selected
         am = AwarenessManager(kb, 'goal', budget=2, instance_kb=ikb)
-        am.tick(dt=100.0)  # max out epistemic errors
+        am.tick(dt=100.0)
         schedule = am.tick(dt=0.0)
 
-        # irrelevant_inst has class_attention=0 → priority=0 → excluded by tight budget
         assert 'irrelevant_inst' not in schedule
-        # relevant_inst has class_attention=0.5 → priority>0 → should be present
         assert 'relevant_inst' in schedule or 'relevant_class' in schedule
 
-        # Double-check: irrelevant_inst priority is exactly 0
         p = am.priorities()
         assert p['irrelevant_inst'] == pytest.approx(0.0)
 
     def test_budget_respected_across_class_and_instance(self):
-        kb = build_birdhouse_kb()
-        ikb = build_birdhouse_instance_kb()
-        am = AwarenessManager(kb, 'build_birdhouse', budget=4, instance_kb=ikb)
+        kb = _simple_class_kb()
+        ikb = _simple_instance_kb()
+        am = AwarenessManager(kb, 'task', budget=4, instance_kb=ikb)
         schedule = am.tick(dt=100.0)
         assert len(schedule) <= 4
 
     def test_observe_works_on_instance_id(self):
-        kb = build_birdhouse_kb()
-        ikb = build_birdhouse_instance_kb()
-        am = AwarenessManager(kb, 'build_birdhouse', observation_interval=2.0, instance_kb=ikb)
+        kb = _simple_class_kb()
+        ikb = _simple_instance_kb()
+        am = AwarenessManager(kb, 'task', observation_interval=2.0, instance_kb=ikb)
         am.tick(dt=10.0)
-        before = ikb.get_instance('hammer_bench').epistemic_error
-        am.observe('hammer_bench')
-        after = ikb.get_instance('hammer_bench').epistemic_error
+        before = ikb.get_instance('tool_a_inst_1').epistemic_error
+        am.observe('tool_a_inst_1')
+        after = ikb.get_instance('tool_a_inst_1').epistemic_error
         assert after < before
 
     def test_observe_instance_returns_refresh_amount(self):
-        kb = build_birdhouse_kb()
-        ikb = build_birdhouse_instance_kb()
-        am = AwarenessManager(kb, 'build_birdhouse', observation_interval=2.0, instance_kb=ikb)
-        refresh = am.observe('alice_hand')
+        kb = _simple_class_kb()
+        ikb = _simple_instance_kb()
+        am = AwarenessManager(kb, 'task', observation_interval=2.0, instance_kb=ikb)
+        refresh = am.observe('tool_a_inst_1')
         # δ=0.1, T=2.0 → 1 - e^(-0.2)
         expected = 1.0 - math.exp(-0.1 * 2.0)
         assert refresh == pytest.approx(expected)
 
     def test_observe_unknown_id_raises(self):
-        kb = build_birdhouse_kb()
-        ikb = build_birdhouse_instance_kb()
-        am = AwarenessManager(kb, 'build_birdhouse', instance_kb=ikb)
+        kb = _simple_class_kb()
+        ikb = _simple_instance_kb()
+        am = AwarenessManager(kb, 'task', instance_kb=ikb)
         with pytest.raises(ValueError, match="nonexistent"):
             am.observe('nonexistent')
 
     def test_priorities_contains_class_and_instance_ids(self):
-        kb = build_birdhouse_kb()
-        ikb = build_birdhouse_instance_kb()
-        am = AwarenessManager(kb, 'build_birdhouse', instance_kb=ikb)
+        kb = _simple_class_kb()
+        ikb = _simple_instance_kb()
+        am = AwarenessManager(kb, 'task', instance_kb=ikb)
         p = am.priorities()
-        # Class IDs present
-        assert 'hammer' in p
-        assert 'build_birdhouse' in p
-        # Instance IDs present
-        assert 'hammer_bench' in p
-        assert 'alice_hand' in p
+        assert 'tool_a' in p
+        assert 'task' in p
+        assert 'tool_a_inst_1' in p
+        assert 'tool_b_inst_1' in p
 
     def test_instance_attention_zero_without_instance_kb(self):
-        # Without instance_kb, attention dict contains only class-level IDs
-        kb = build_birdhouse_kb()
-        am = AwarenessManager(kb, 'build_birdhouse')
+        kb = _simple_class_kb()
+        am = AwarenessManager(kb, 'task')
         attn = am.attention()
-        assert 'hammer_bench' not in attn
+        assert 'tool_a_inst_1' not in attn
 
     def test_goal_switch_reshuffles_instance_attention(self):
         # During inspect_pv_field: panel instances should have higher attention
@@ -394,8 +356,6 @@ class TestAwarenessManagerWithInstances:
         am.set_goal('emergency_landing')
         attn_emergency = am.attention()
 
-        # panel instances should be more attended during inspection
         assert attn_inspect.get('panel_A1', 0.0) > attn_emergency.get('panel_A1', 0.0)
-        # battery instance should be more attended during emergency
         assert (attn_emergency.get('battery_main', 0.0) >
                 attn_inspect.get('battery_main', 0.0))
