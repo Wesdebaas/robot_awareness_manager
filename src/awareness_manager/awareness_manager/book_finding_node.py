@@ -147,18 +147,20 @@ class BookFindingNode(Node):
         target_zone = get_room_for_pose(x, y)
         if target_zone is None:
             return
-        book_cid = f"book_{target_zone}"
-        eta = self._nav_eta
         with self._lock:
-            if self._queued_nav_goal != book_cid:
-                self._queued_nav_goal = book_cid
-                # Use a surrogate goal: 'find_book' (the class KB goal) with
-                # the matching book instance as the focus.  F2 will boost
-                # attention for concepts near the target room.
-                self._am.queue_goal(book_cid, eta=eta, level='task')
+            if self._queued_nav_goal != target_zone:
+                self._queued_nav_goal = target_zone
+                # Use actual zone-to-zone travel time for accurate F2 window;
+                # fall back to the nav_eta parameter when the zone is unknown.
+                eta = ZONE_TRAVEL_TIMES.get(
+                    (self._current_zone or 'living_room', target_zone),
+                    self._nav_eta,
+                )
+                # Queue the room concept (class-level KB) — F2 spreading
+                # activation reaches book instances via room→book_class edges.
+                self._am.queue_goal(target_zone, eta=eta, level='task')
                 self.get_logger().info(
-                    f"[NAV]  Queued goal '{book_cid}' ETA={eta:.0f}s "
-                    f"(navigating to '{target_zone}')"
+                    f"[NAV]  Queued goal '{target_zone}' ETA={eta:.0f}s"
                 )
 
     # ── Tick ──────────────────────────────────────────────────────────────────

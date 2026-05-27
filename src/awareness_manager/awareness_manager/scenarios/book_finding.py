@@ -63,13 +63,14 @@ ZONE_TRAVEL_TIMES: dict[tuple[str, str], float] = {
 
 # Room bounding boxes in map frame (x_min, x_max, y_min, y_max).
 # Used by the ROS node to map amcl_pose → current zone.
-# Approximate values for KRR_Course_Small_house; tune after first launch.
+# Derived from KRR_Course_Small_house map (247×244 cells, 0.05 m/cell, origin −9.51,−4.73).
+# kitchen must come before living_room because their x ranges overlap.
 ROOM_BOUNDS: dict[str, tuple[float, float, float, float]] = {
-    "living_room": (-3.0,  2.5, -0.5,  5.0),
-    "kitchen":     ( 1.0,  4.5, -0.5,  4.0),
-    "bathroom":    (-1.5,  2.5, -5.0, -0.5),
-    "bedroom":     (-5.5, -1.5, -0.5,  4.5),
-    "study":       (-8.5, -5.0, -0.5,  4.5),
+    "kitchen":     (-1.5,  1.5,  1.3,  2.5),   # north of living_room wall
+    "living_room": (-3.0,  2.5, -0.5,  1.3),   # main floor / spawn area
+    "bathroom":    (-1.5,  2.5, -2.0, -0.5),   # south corridor
+    "bedroom":     (-5.5, -1.5, -0.5,  4.5),   # west area
+    "study":       (-8.5, -5.0, -0.5,  4.5),   # far west
 }
 
 _TTL = Path(__file__).with_name("book_finding.ttl")

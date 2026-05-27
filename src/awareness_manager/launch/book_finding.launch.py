@@ -44,6 +44,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('alpha',                default_value='0.5'),
         DeclareLaunchArgument('nav_eta',              default_value='15.0'),
         DeclareLaunchArgument('f6',                   default_value='true'),
+        DeclareLaunchArgument('dwell_time',           default_value='8.0'),
+        DeclareLaunchArgument('loop',                 default_value='true'),
+        DeclareLaunchArgument('start_delay',          default_value='38.0'),
+        DeclareLaunchArgument('use_rviz',             default_value='true'),
     ]
 
     pkg_robocup   = get_package_share_directory('robocup_home_simulation')
@@ -105,11 +109,13 @@ def generate_launch_description() -> LaunchDescription:
     # ── gzserver ──────────────────────────────────────────────────────────────
     # params_file='' prevents nav_launch's params_file declaration from
     # propagating into gzserver.launch.py via the shared launch context.
+    # verbose=true shows world-loading progress on the terminal so you can
+    # see when gzserver is ready before spawn_entity.py times out.
     gzserver_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')
         ),
-        launch_arguments={'world': world_file, 'params_file': ''}.items(),
+        launch_arguments={'world': world_file, 'params_file': '', 'verbose': 'true'}.items(),
     )
 
     # ── gzclient — launched directly so we can omit libgazebo_ros_eol_gui.so ─
@@ -123,7 +129,10 @@ def generate_launch_description() -> LaunchDescription:
         additional_env={**gazebo_env, 'OGRE_RTT_MODE': 'Copy'},
     )
 
-    # ── Robot + controllers (delayed 5 s) ─────────────────────────────────────
+    # ── Robot + controllers (delayed 20 s) ───────────────────────────────────
+    # gzserver typically loads the world within 5 s on a warm model cache
+    # and within ~22 s on a cold cache.  spawn_entity.py has a 30 s service
+    # timeout so it will wait for /spawn_entity even if we start early.
     spawn_launch = IncludeLaunchDescription(
         XMLLaunchDescriptionSource(
             os.path.join(pkg_mirte, 'launch', 'spawn_mirte_master.launch.xml')
@@ -167,7 +176,7 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     delayed_robot = TimerAction(
-        period=5.0,
+        period=20.0,
         actions=[spawn_launch, controllers_1, controllers_2, zero_cmd_vel, twist_mux],
     )
 
@@ -176,6 +185,7 @@ def generate_launch_description() -> LaunchDescription:
         PythonLaunchDescriptionSource(
             os.path.join(pkg_nav, 'launch', 'robot_navigation.launch.py')
         ),
+        launch_arguments={'use_rviz': LaunchConfiguration('use_rviz')}.items(),
     )
 
     # ── BookFinding AM node ───────────────────────────────────────────────────
@@ -194,6 +204,21 @@ def generate_launch_description() -> LaunchDescription:
         }],
     )
 
+    # ── Scripted room-tour navigator ──────────────────────────────────────────
+    # Drives the robot through all rooms in sequence so the AM can demonstrate
+    # F2 anticipatory pre-tuning without a manual decision-maker.
+    navigator_node = Node(
+        package='awareness_manager',
+        executable='scripted_navigator_node',
+        name='scripted_navigator',
+        output='screen',
+        parameters=[{
+            'dwell_time':  LaunchConfiguration('dwell_time'),
+            'loop':        LaunchConfiguration('loop'),
+            'start_delay': LaunchConfiguration('start_delay'),
+        }],
+    )
+
     return LaunchDescription(
         args + set_env_actions + [
             nav_launch,
@@ -201,5 +226,6 @@ def generate_launch_description() -> LaunchDescription:
             gzclient_process,
             delayed_robot,
             am_node,
+            navigator_node,
         ]
     )
