@@ -53,7 +53,7 @@ StrategyName = Literal[
     "PRIORITY-AM", "PRIORITY-EPISTEMIC", "REACTIVE", "ROTATION", "RANDOM"
 ]
 
-_DT: float = 1.0  # tick size (seconds) — M7 latency in ticks equals latency in seconds
+_DT: float = 1.0  # tick size (seconds) — latency in ticks equals latency in seconds
 
 
 @dataclass

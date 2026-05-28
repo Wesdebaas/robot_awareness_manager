@@ -157,6 +157,10 @@ def mean_epistemic_error_relevant(
 
 # ---------------------------------------------------------------------------
 # M5 — Budget utilisation  (m5_budget_util)
+# Sanity check only — always returns 1.0 in well-formed experiments because
+# _top_n() fills the full budget whenever len(schedulable) >= budget, which
+# is structurally guaranteed by the KB/budget sizing in all experiments.
+# Not used in thesis evaluation results.
 # ---------------------------------------------------------------------------
 
 def budget_utilisation(trace: dict) -> dict:
