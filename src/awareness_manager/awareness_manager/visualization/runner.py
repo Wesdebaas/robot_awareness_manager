@@ -4,18 +4,12 @@ runner.py - background thread that drives AwarenessManager.tick() at real-time s
 All AM state reads (snapshot, history) and writes (tick, observe) share a
 threading.Lock so the Dash callback thread and the simulation thread never race.
 
-Phase 2 addition: rolling attention history buffer.
-    After each tick the runner appends an extended HistoryEntry to a per-concept
-    deque of fixed length. The hover callback reads this via runner.history(concept_id)
-    to build sparklines.
+Rolling history buffer: after each tick the runner appends a HistoryEntry to a
+per-concept deque (history_maxlen=300, 30 s at dt=0.1 s). The hover callback
+reads this via runner.history(concept_id) to build sparklines.
 
-    Memory bound: history_maxlen=300 (30 s at dt=0.1 s).
-    18 nodes x 300 entries x 8 floats x 8 B ≈ 346 KB. Trivially safe.
-
-Phase 3 addition: TraceLogger integration + flush_trace().
-    An optional TraceLogger is called after each tick to stream a complete
-    activation trace to disk. flush_trace() dumps the rolling history buffer
-    to a trace directory for the "Save last Ns" live-export button.
+TraceLogger integration: an optional TraceLogger streams each tick to JSONL on
+disk. flush_trace() dumps the rolling history buffer for the "Save last Ns" button.
 """
 
 import json

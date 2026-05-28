@@ -287,6 +287,20 @@ class InstanceKnowledgeBase:
                     instance.urgency + instance.urgency_rate * a * dt
                 )
 
+    def update_decay_rate(
+        self,
+        instance_id: str,
+        surprise: float,
+        tau: float = 0.05,
+        delta_min: float = 0.01,
+        delta_max: float = 1.0,
+    ) -> float:
+        """EMA update of an instance's decay rate from observed surprise. Mirrors KnowledgeBase.update_decay_rate."""
+        instance = self._instances[instance_id]
+        new_delta = (1.0 - tau) * instance.decay_rate + tau * surprise
+        instance.decay_rate = max(delta_min, min(delta_max, new_delta))
+        return instance.decay_rate
+
     def reset_urgency(self, instance_id: str) -> None:
         """Reset the urgency signal for one instance to 0.
 

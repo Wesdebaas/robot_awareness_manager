@@ -18,7 +18,7 @@ Layout:
   ├─ [replay: controls + scrubber + events strip] ────────────────────┤
   └─────────────────────────────────────────────────────────────────  ┘
 
-Node visual encoding (Phase 2):
+Node visual encoding:
   Fill color  - hue by dominant activation channel; lightness by epistemic error
                   blue   = mission-driven   (F1 + F2 combined)
                   teal   = relational-driven (instance-graph propagation)

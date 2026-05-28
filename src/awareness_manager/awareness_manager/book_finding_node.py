@@ -18,6 +18,7 @@ Topics published (same as awareness_node):
     awareness/schedule         (std_msgs/String  JSON list)
     awareness/goal             (std_msgs/String)
     awareness/controller_state (std_msgs/String  JSON)  — book-finding status
+    awareness/suggested_room   (std_msgs/String)        — top-priority room for navigator
 
 Topics subscribed:
     /amcl_pose                 (geometry_msgs/PoseWithCovarianceStamped)
@@ -42,7 +43,7 @@ from std_msgs.msg import String
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped
 
 from awareness_manager.awareness_manager import AwarenessManager
-from awareness_manager.feature_config import FeatureConfig
+from awareness_manager.feature_config import FeatureConfig, PriorityWeights
 from awareness_manager.scenarios.book_finding import (
     ZONE_TRAVEL_TIMES,
     build_book_finding_kb,
@@ -63,6 +64,13 @@ class BookFindingNode(Node):
         self.declare_parameter('alpha',                0.5)
         self.declare_parameter('nav_eta',              15.0)
         self.declare_parameter('f6',                   True)
+        self.declare_parameter('w_ea',     1.0)
+        self.declare_parameter('w_surp',   0.0)
+        self.declare_parameter('w_f2',     1.0)
+        self.declare_parameter('w_urg',    1.0)
+        self.declare_parameter('w_tc',     1.0)
+        self.declare_parameter('ld',       False)
+        self.declare_parameter('tau_decay', 0.05)
 
         budget    = self.get_parameter('budget').value
         tick_rate = self.get_parameter('tick_rate').value
@@ -73,7 +81,15 @@ class BookFindingNode(Node):
         self._obs_int   = obs_int
         self._dt        = 1.0 / tick_rate
 
-        fc = FeatureConfig() if f6 else FeatureConfig.with_disabled('f6')
+        ld = self.get_parameter('ld').value
+        fc = FeatureConfig(use_f6_observation_cost=f6, use_learnable_decay=ld)
+        pw = PriorityWeights(
+            w_ea_product      =self.get_parameter('w_ea').value,
+            w_surprise        =self.get_parameter('w_surp').value,
+            w_f2_anticipatory =self.get_parameter('w_f2').value,
+            w_urgency         =self.get_parameter('w_urg').value,
+            w_travel_cost     =self.get_parameter('w_tc').value,
+        )
 
         kb              = build_book_finding_kb()
         ikb             = build_book_finding_instance_kb()
@@ -88,6 +104,8 @@ class BookFindingNode(Node):
             feature_config=fc,
             zone_travel_times=ZONE_TRAVEL_TIMES,
             zone_assignment=zone_assignment,
+            priority_weights=pw,
+            tau_decay=self.get_parameter('tau_decay').value,
         )
 
         # State
@@ -100,10 +118,11 @@ class BookFindingNode(Node):
         self._queued_nav_goal: str | None = None
 
         # Publishers
-        self._pub_state    = self.create_publisher(String, 'awareness/state',            10)
-        self._pub_schedule = self.create_publisher(String, 'awareness/schedule',         10)
-        self._pub_goal     = self.create_publisher(String, 'awareness/goal',             10)
-        self._pub_ctrl     = self.create_publisher(String, 'awareness/controller_state', 10)
+        self._pub_state         = self.create_publisher(String, 'awareness/state',            10)
+        self._pub_schedule      = self.create_publisher(String, 'awareness/schedule',         10)
+        self._pub_goal          = self.create_publisher(String, 'awareness/goal',             10)
+        self._pub_ctrl          = self.create_publisher(String, 'awareness/controller_state', 10)
+        self._pub_suggested_room = self.create_publisher(String, 'awareness/suggested_room',  10)
 
         # Subscriptions
         self.create_subscription(
@@ -165,6 +184,20 @@ class BookFindingNode(Node):
 
     # ── Tick ──────────────────────────────────────────────────────────────────
 
+    _KNOWN_ROOMS: frozenset = frozenset(
+        {"kitchen", "bathroom", "bedroom", "study", "living_room"}
+    )
+
+    def _concept_to_room(self, cid: str) -> str | None:
+        """Map a concept/instance ID to a room name, or None if not room-specific."""
+        if cid in self._KNOWN_ROOMS:
+            return cid
+        if cid.startswith("book_"):
+            room = cid[len("book_"):]
+            if room in self._KNOWN_ROOMS:
+                return room
+        return None
+
     def _tick(self) -> None:
         with self._lock:
             schedule = self._am.tick(dt=self._dt, robot_pos=self._current_robot_pos)
@@ -175,6 +208,13 @@ class BookFindingNode(Node):
                     self._am.observe(cid)
                 self._time_since_obs = 0.0
                 self._last_schedule = list(schedule)
+
+            # Publish the top-priority room so the navigator can follow AM output
+            for cid in schedule:
+                room = self._concept_to_room(cid)
+                if room:
+                    self._pub_suggested_room.publish(String(data=room))
+                    break
 
             self._publish_state(schedule)
 

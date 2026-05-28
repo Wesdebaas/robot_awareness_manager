@@ -27,13 +27,8 @@ Instance handling: instances of any class in the active set receive attention
     (same uniform 1.0 as their parent class). No relational boost - the reactive
     baseline has no instance-graph reasoning.
 
-Architectural note (Phase 4):
-    The 1-hop distance is configurable via hop_distance (default 1). A hop_distance
-    of 0 would give "Goal-Only" - only the goal node itself is attended to. This
-    degenerate case is left as an easy extension point: if Phase 5 evaluation shows
-    the AM-vs-Reactive gap is too narrow to be compelling, a Goal-Only (0-hop)
-    baseline can be added as a fourth strategy by constructing with hop_distance=0.
-    The round-robin selection and all other logic remain unchanged.
+hop_distance is configurable (default 1). Setting it to 0 gives "Goal-Only" —
+only the goal node itself is attended to. Useful as an additional ablation point.
 """
 
 from __future__ import annotations

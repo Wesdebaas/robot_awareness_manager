@@ -142,3 +142,42 @@ class TestEpistemicError:
         # Large refresh on a fresh concept should not go below 0
         kb.refresh_concept('near', refresh=1.0)
         assert kb.get_concept('near').epistemic_error >= 0.0
+
+
+class TestLearnableDecay:
+    def test_high_surprise_increases_decay_rate(self):
+        kb = _simple_kb()
+        original = kb.get_concept('near').decay_rate
+        kb.update_decay_rate('near', surprise=1.0, tau=0.5)
+        assert kb.get_concept('near').decay_rate > original
+
+    def test_zero_surprise_decreases_decay_rate(self):
+        kb = _simple_kb()
+        kb.get_concept('near').decay_rate = 0.5
+        kb.update_decay_rate('near', surprise=0.0, tau=0.5)
+        assert kb.get_concept('near').decay_rate < 0.5
+
+    def test_ema_formula(self):
+        kb = _simple_kb()
+        kb.get_concept('near').decay_rate = 0.2
+        result = kb.update_decay_rate('near', surprise=0.8, tau=0.1)
+        expected = (1 - 0.1) * 0.2 + 0.1 * 0.8
+        assert result == pytest.approx(expected)
+
+    def test_clamp_to_delta_min(self):
+        kb = _simple_kb()
+        kb.get_concept('near').decay_rate = 0.01
+        result = kb.update_decay_rate('near', surprise=0.0, tau=1.0, delta_min=0.01)
+        assert result >= 0.01
+
+    def test_clamp_to_delta_max(self):
+        kb = _simple_kb()
+        kb.get_concept('near').decay_rate = 0.9
+        result = kb.update_decay_rate('near', surprise=1.0, tau=1.0, delta_max=1.0)
+        assert result <= 1.0
+
+    def test_returns_updated_decay_rate(self):
+        kb = _simple_kb()
+        returned = kb.update_decay_rate('near', surprise=0.5, tau=0.2)
+        stored   = kb.get_concept('near').decay_rate
+        assert returned == pytest.approx(stored)

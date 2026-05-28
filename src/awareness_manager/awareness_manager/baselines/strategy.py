@@ -17,7 +17,7 @@ budget convention
     tick, so no meaningful budget cap exists). The dashboard checks budget < 0
     and displays "Unlimited refresh" instead of a numeric bar.
 
-strategy_params() conventions (per Phase 4 design decision):
+strategy_params() conventions:
     AlwaysOnBaseline  → {}
     ReactiveBaseline  → {"hop_distance": 1, "selection": "round_robin"}
     AwarenessManager  → full hyperparameter set (alpha, budget, lambdas, etc.)

@@ -32,11 +32,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'awareness_node             = awareness_manager.ros_node:main',
-            'book_finding_node          = awareness_manager.book_finding_node:main',
-            'scripted_navigator_node    = awareness_manager.scripted_navigator_node:main',
-            'run_evaluation             = evaluation.run_evaluation:main',
-            'run_dashboard              = demos.run_dashboard:main',
+            'awareness_node          = awareness_manager.ros_node:main',
+            'book_finding_node       = awareness_manager.book_finding_node:main',
+            'scripted_navigator_node = awareness_manager.scripted_navigator_node:main',
+            'run_dashboard           = demos.run_dashboard:main',
         ],
     },
 )

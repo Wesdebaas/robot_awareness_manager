@@ -1,63 +1,30 @@
 """
-metrics.py - Pure-function metric library for trace-based evaluation.
+metrics.py - Pure-function metric library for trace-based replay comparison.
 
-Each function takes a loaded trace (dict with 'meta' and 'ticks' keys, as
-returned by load_trace()) and returns a scalar or timeseries.  All metrics
-read from the trace file only - no scenario re-running required.
+Used by the dashboard compare view to compute M1-M5 from saved trace files.
+All functions take a loaded trace dict (from load_trace()) and return scalars
+or timeseries — no scenario re-running required.
 
-Metric set (primary → secondary)
----------------------------------
-M1  e_at_transition     - max E across new-goal's 1-hop hood at the transition tick.
-                          Primary readiness metric: did the strategy prepare before the switch?
-M2  pre_transition_attn - mean attention to incoming-goal hood in the window before switch.
-                          Tests F2 (Anticipatory Horizon) directly: did the AM predict the need?
-M3  lag_seconds         - seconds until E_max < 0.1 after the transition.
-                          Recovery speed; complements M1 (low M1 → low M3 almost by definition).
-M4  e_relevant          - run-mean epistemic error over goal-relevant concepts.
-                          Ongoing knowledge quality; useful for regime comparisons.
-M5  budget_util         - schedule slots used / budget per tick.
-                          Sanity check; confirms budget is the binding constraint.
+Metrics returned by all_metrics():
+    M1  m1_e_at_transition     - max E in new-goal's 1-hop hood at the transition tick
+    M2  m2_pre_transition_attn - mean attention to incoming-goal hood before the switch
+    M3  m3_lag_seconds         - seconds until E_max < 0.1 after the transition
+    M4  m4_e_relevant          - run-mean epistemic error over goal-relevant concepts
+    M5  m5_budget_util         - schedule slots used / budget per tick
 
-Additional functions available but not included in all_metrics() output:
-    mean_epistemic_error_irrelevant() - E over concepts outside the mission neighbourhood.
-    anticipatory_cache_hit_rate()     - binary pre-cache hit rate (redundant with M2).
-    refresh_count_by_relevance()      - relevant vs irrelevant schedule slots.
-
-Neighborhood convention
------------------------
-The "goal neighborhood" of goal g is the set of class concepts reachable in
-exactly 1 hop in the semantic_edges graph, filtered to decay_rate > 0 (task
-nodes are excluded — their E is always 0 by design).
-
-Strategy-agnostic: does not depend on the strategy's attention values.
-Matches ReactiveBaseline's active set exactly — the fairest common ruler.
-
-Class concepts only.  Instance concepts inherit their class's membership for
-mean-E metrics; excluded from transition metrics (class-level only).
+Neighborhood convention: 1-hop semantic class neighbours of the active goal,
+filtered to decay_rate > 0. Strategy-agnostic.
 
 Trace format (schema v2)
-------------------------
-meta: {schema_version, scenario, strategy, strategy_params, budget, dt,
-       sample_rate, structure: {classes, instances, semantic_edges,
-       relational_edges}, history_maxlen, truncated}
-
-tick: {t, goal, queue, schedule, events, concepts:
-        {concept_id: {a, e, pe, ch_m, ch_an, ch_r, ch_s}}}
-
-"in_schedule" is NOT a stored per-concept field; reconstruct as
-    concept_id in tick["schedule"]
+    meta: {schema_version, scenario, strategy, strategy_params, budget, dt, structure}
+    tick: {t, goal, queue, schedule, events, concepts: {cid: {a, e, pe, ...}}}
 """
 
 from __future__ import annotations
 
 import json
-import math
 import statistics
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Trace loader
@@ -135,7 +102,7 @@ def _instance_class_map(meta: dict) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# M1 - Mean epistemic error over goal-relevant concepts
+# M4 — Mean epistemic error over goal-relevant concepts  (m4_e_relevant)
 # ---------------------------------------------------------------------------
 
 def mean_epistemic_error_relevant(
@@ -186,63 +153,10 @@ def mean_epistemic_error_relevant(
     }
 
 
-# ---------------------------------------------------------------------------
-# M2 - Mean epistemic error over goal-irrelevant concepts
-# ---------------------------------------------------------------------------
-
-def mean_epistemic_error_irrelevant(
-    trace: dict,
-    *,
-    include_instances: bool = True,
-) -> dict:
-    """
-    Mean epistemic error over goal-irrelevant concepts.
-
-    Irrelevant = all concepts with decay_rate > 0 that are NOT in the
-    goal-relevant neighbourhood. Measures "wasted staleness" - concepts
-    ignored by the strategy that might have been useful.
-
-    Formula: complement of M1, same averaging logic.
-
-    Returns:
-        {
-            "scalar":    float
-            "timeseries": [(t, E_irrel_t), ...]
-            "irrelevant_set": sorted list of class IDs in the irrelevant set
-        }
-    """
-    meta, ticks = trace["meta"], trace["ticks"]
-    hood = _mission_neighborhood(meta, ticks)
-    decay = _class_decay_rates(meta)
-    inst_class = _instance_class_map(meta) if include_instances else {}
-
-    # All class concepts with decay_rate > 0 that are NOT in hood
-    irrel_classes = frozenset(
-        cid for cid, dr in decay.items() if dr > 0.0 and cid not in hood
-    )
-    irrel_instances = frozenset(
-        iid for iid, cls in inst_class.items() if cls in irrel_classes
-    ) if include_instances else frozenset()
-
-    timeseries: list[tuple[float, float]] = []
-    for rec in ticks:
-        vals = [
-            c["e"] for cid, c in rec["concepts"].items()
-            if cid in irrel_classes or cid in irrel_instances
-        ]
-        if vals:
-            timeseries.append((rec["t"], statistics.mean(vals)))
-
-    scalar = statistics.mean(v for _, v in timeseries) if timeseries else float("nan")
-    return {
-        "scalar": scalar,
-        "timeseries": timeseries,
-        "irrelevant_set": sorted(irrel_classes),
-    }
 
 
 # ---------------------------------------------------------------------------
-# M3 - Refresh budget utilisation
+# M5 — Budget utilisation  (m5_budget_util)
 # ---------------------------------------------------------------------------
 
 def budget_utilisation(trace: dict) -> dict:
@@ -288,7 +202,7 @@ def budget_utilisation(trace: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# M4 - Cognitive lag at task transition
+# M1/M3 — Cognitive lag at goal transition  (m1_e_at_transition, m3_lag_seconds)
 # ---------------------------------------------------------------------------
 
 def cognitive_lag(
@@ -386,164 +300,7 @@ def cognitive_lag(
 
 
 # ---------------------------------------------------------------------------
-# M5 - Anticipatory cache hit rate
-# ---------------------------------------------------------------------------
-
-def anticipatory_cache_hit_rate(
-    trace: dict,
-    *,
-    lookback_ticks: int = 50,
-    lookback_seconds: float | None = None,
-) -> dict:
-    """
-    At each goal transition, was the new goal's neighbourhood already being
-    refreshed (in the schedule) before the transition occurred?
-
-    A "hit" on transition i is defined as: ≥1 concept in the new goal's
-    1-hop neighbourhood appeared in the schedule during the lookback window
-    immediately preceding the transition tick.
-
-    The lookback window is determined by (in priority order):
-        1. lookback_seconds (if given) → int(lookback_seconds / dt) ticks
-        2. lookback_ticks (default 50)
-    The intended recency window is observation_interval / 2, which is passed
-    by all_metrics when the trace's observation_interval is known.
-
-    This is the metric that quantifies F2 (Anticipatory Horizon): the AM
-    pre-loads the upcoming goal's neighbourhood before the transition fires;
-    reactive and always_on do not (or do so only coincidentally).
-
-    Formula:
-        hit(i) = |{c ∈ hood(new_i) : c ∈ union(schedule[t-lookback..t-1])}| > 0
-        hit_rate = sum(hit) / len(transitions)
-
-    Returns:
-        {
-            "hit_rate":       float  - fraction of transitions with ≥1 pre-cached concept
-            "hits":           int
-            "total":          int
-            "transitions":    [{t_transition, to_goal, hit, pre_cached_concepts}, ...]
-            "lookback_ticks": int    - actual window used
-        }
-
-    Caveats:
-        AlwaysOnBaseline hits 1.0 trivially (observes everything every tick).
-        The meaningful contrast is AM vs Reactive.
-    """
-    meta, ticks = trace["meta"], trace["ticks"]
-    dt = meta.get("dt", 0.1)
-    if lookback_seconds is not None:
-        lookback_ticks = max(1, int(lookback_seconds / dt))
-
-    results = []
-
-    for i, rec in enumerate(ticks):
-        for ev in rec.get("events", []):
-            if ev["type"] != "goal_transition":
-                continue
-            new_goal = ev["to"]
-            hood = _goal_neighborhood(meta, new_goal)
-            lo = max(0, i - lookback_ticks)
-            pre_scheduled: set[str] = set()
-            for j in range(lo, i):
-                pre_scheduled |= set(ticks[j].get("schedule", []))
-            pre_cached = hood & pre_scheduled
-            hit = len(pre_cached) > 0
-            results.append({
-                "t_transition": rec["t"],
-                "to_goal": new_goal,
-                "hit": hit,
-                "pre_cached_concepts": sorted(pre_cached),
-            })
-
-    hits = sum(1 for r in results if r["hit"])
-    total = len(results)
-    hit_rate = hits / total if total > 0 else float("nan")
-    return {
-        "hit_rate": hit_rate,
-        "hits": hits,
-        "total": total,
-        "transitions": results,
-        "lookback_ticks": lookback_ticks,
-    }
-
-
-# ---------------------------------------------------------------------------
-# M6 - Total refresh count by relevance bucket
-# ---------------------------------------------------------------------------
-
-def refresh_count_by_relevance(
-    trace: dict,
-    *,
-    include_instances: bool = True,
-) -> dict:
-    """
-    Total number of refresh schedule slots spent on relevant vs irrelevant
-    concepts over the entire run.
-
-    "In the schedule" is reconstructed as concept_id ∈ record["schedule"].
-    Each slot counts once - if schedule has budget 2, a relevant concept
-    being scheduled contributes 1 to relevant_count.
-
-    Formula:
-        relevant_count   = Σ_t |schedule_t ∩ relevant_set|
-        irrelevant_count = Σ_t |schedule_t ∩ irrelevant_set|
-        ratio = relevant_count / max(1, irrelevant_count)
-
-    Returns:
-        {
-            "relevant_count":   int
-            "irrelevant_count": int
-            "total_count":      int
-            "relevant_fraction": float  - relevant_count / total_count
-            "ratio":            float   - relevant / irrelevant (inf if irrelevant=0)
-        }
-
-    Caveats:
-        Concepts that are neither relevant nor irrelevant (e.g. task nodes
-        with decay_rate=0) are not counted in either bucket.  Their schedule
-        appearances contribute to total_count but not to either sub-count.
-    """
-    meta, ticks = trace["meta"], trace["ticks"]
-    hood = _mission_neighborhood(meta, ticks)
-    decay = _class_decay_rates(meta)
-    inst_class = _instance_class_map(meta) if include_instances else {}
-
-    irrel_classes = frozenset(
-        cid for cid, dr in decay.items() if dr > 0.0 and cid not in hood
-    )
-    irrel_instances = frozenset(
-        iid for iid, cls in inst_class.items() if cls in irrel_classes
-    ) if include_instances else frozenset()
-
-    inst_relevant = frozenset(
-        iid for iid, cls in inst_class.items() if cls in hood
-    ) if include_instances else frozenset()
-
-    rel_count = 0
-    irrel_count = 0
-    total_count = 0
-    for rec in ticks:
-        for cid in rec.get("schedule", []):
-            total_count += 1
-            if cid in hood or cid in inst_relevant:
-                rel_count += 1
-            elif cid in irrel_classes or cid in irrel_instances:
-                irrel_count += 1
-
-    ratio = rel_count / max(1, irrel_count)
-    rel_frac = rel_count / max(1, total_count)
-    return {
-        "relevant_count": rel_count,
-        "irrelevant_count": irrel_count,
-        "total_count": total_count,
-        "relevant_fraction": round(rel_frac, 4),
-        "ratio": round(ratio, 4),
-    }
-
-
-# ---------------------------------------------------------------------------
-# M7 - Pre-transition attention (AM signal quality)
+# M2 — Pre-transition attention  (m2_pre_transition_attn)
 # ---------------------------------------------------------------------------
 
 def pre_transition_attention(
@@ -648,34 +405,27 @@ def pre_transition_attention(
 
 def all_metrics(trace: dict, *, params: dict | None = None) -> dict:
     """
-    Compute all metrics for a single trace and return them in a flat dict.
+    Compute M1-M5 for a single trace and return them in a flat dict.
 
-    Scalar values are pulled to the top level for easy CSV export.  Full
-    timeseries and transition details are kept nested.
+    Used by the dashboard compare view. All metrics are computed from the
+    saved trace — no scenario re-running required.
 
     Args:
         trace:  Loaded trace dict (from load_trace()).
-        params: Optional run-level param dict (e.g. from manifest.json).
-                Used to derive observation_interval for the M2 pre-attention window.
-                Falls back to meta["strategy_params"]["observation_interval"]
-                for AM traces; uses a 50-tick fallback for others.
+        params: Optional run-level param dict. Used to derive observation_interval
+                for the M2 pre-attention window.
 
     Returns:
         {
-            # Primary metrics (transition quality):
-            "m1_e_at_transition":     float | None,  - max E in new-goal hood at switch tick
-            "m2_pre_transition_attn": float | None,  - mean attention to incoming hood before switch
-            "m3_lag_seconds":         float | None,  - seconds until E_max < 0.1 after switch
-
-            # Secondary metrics (run-level quality):
-            "m4_e_relevant":          float,  - run-mean E over goal-relevant concepts
-            "m5_budget_util":         float,  - mean schedule utilisation (slots / budget)
-
-            # Full nested results:
-            "m_cognitive_lag":  {...},   - full cognitive_lag() result
-            "m_pre_attn":       {...},   - full pre_transition_attention() result
-            "m_e_relevant":     {...},   - full mean_epistemic_error_relevant() result
-            "m_budget_util":    {...},   - full budget_utilisation() result
+            "m1_e_at_transition":     float | None,
+            "m2_pre_transition_attn": float | None,
+            "m3_lag_seconds":         float | None,
+            "m4_e_relevant":          float,
+            "m5_budget_util":         float,
+            "m_cognitive_lag":        {...},
+            "m_pre_attn":             {...},
+            "m_e_relevant":           {...},
+            "m_budget_util":          {...},
         }
     """
     meta = trace["meta"]
@@ -683,12 +433,11 @@ def all_metrics(trace: dict, *, params: dict | None = None) -> dict:
         (params or {}).get("observation_interval")
         or meta.get("strategy_params", {}).get("observation_interval")
     )
-    m2_lookback_s = oi if oi else None
 
-    m_e_rel = mean_epistemic_error_relevant(trace)
+    m_e_rel  = mean_epistemic_error_relevant(trace)
     m_budget = budget_utilisation(trace)
-    m_lag = cognitive_lag(trace)
-    m_pre = pre_transition_attention(trace, lookback_seconds=m2_lookback_s)
+    m_lag    = cognitive_lag(trace)
+    m_pre    = pre_transition_attention(trace, lookback_seconds=oi)
 
     m1_e_at = (
         statistics.mean(tr["e_max_at_transition"] for tr in m_lag["transitions"])
@@ -701,8 +450,8 @@ def all_metrics(trace: dict, *, params: dict | None = None) -> dict:
         "m3_lag_seconds":         round(m_lag["mean_lag_seconds"], 3) if m_lag["mean_lag_seconds"] is not None else None,
         "m4_e_relevant":          round(m_e_rel["scalar"], 6),
         "m5_budget_util":         round(m_budget["scalar"], 6),
-        "m_cognitive_lag": m_lag,
-        "m_pre_attn":      m_pre,
-        "m_e_relevant":    m_e_rel,
-        "m_budget_util":   m_budget,
+        "m_cognitive_lag":        m_lag,
+        "m_pre_attn":             m_pre,
+        "m_e_relevant":           m_e_rel,
+        "m_budget_util":          m_budget,
     }

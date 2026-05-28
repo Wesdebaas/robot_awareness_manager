@@ -95,99 +95,144 @@ In `--ros` mode the dashboard subscribes to `awareness/state`, `awareness/schedu
 the running node. The controller state panel (MONITORING / SERVING badge + target person)
 is driven by the node's internal state machine.
 
-### Batch Evaluation
+### Evaluation
 
-Run the full budget x observation-interval sweep (27 runs, ~3 min):
-
-```bash
-python3 -m awareness_manager.evaluation batch \
-    --scenario pv_inspection \
-    --strategies awareness_manager,reactive,always_on \
-    --budget 1,2,4 \
-    --obs-interval 1.0,5.0,10.0 \
-    --output experiments/budget_obsint_sweep/
-```
-
-Generate the report from saved traces:
+Six focused experiments, each validating one contribution:
 
 ```bash
-python3 -m awareness_manager.evaluation report \
-    --experiment experiments/budget_obsint_sweep/ \
-    --output reports/budget_obsint_sweep/
-```
+# All six in sequence (~5 min)
+python3 -m awareness_manager.evaluation experiments
 
-Outputs: `summary.csv`, `plots.html` (interactive Plotly figures), `summary.md`
-(metric table, per-regime breakdown, Mann-Whitney U tests).
+# Individual experiments
+python3 -m awareness_manager.evaluation exp1   # Scaling: detection latency vs N and budget
+python3 -m awareness_manager.evaluation exp2   # Goal conditioning: E×A vs pure epistemic
+python3 -m awareness_manager.evaluation exp3   # Anticipatory horizon: F2 on vs off (ETA sweep)
+python3 -m awareness_manager.evaluation exp4   # Instance KB vs class-only (multi-instance sweep)
+python3 -m awareness_manager.evaluation exp5   # Formula ablation: F1 spreading activation
+python3 -m awareness_manager.evaluation exp6   # F6 spatial opportunity cost
+
+# Abstract scenario smoke test and learnable-δ verification
+python3 -m awareness_manager.evaluation abstract --quick
+python3 -m awareness_manager.evaluation learnable-decay
+```
 
 ## Project Structure
 
 ```
 src/awareness_manager/
 ├── awareness_manager/
-│   ├── awareness_manager.py        # Core AM (all 6 formulas)
-│   ├── knowledge_base.py           # Semantic graph with attention + epistemic error
-│   ├── instance_knowledge_base.py  # Instance-level graph
-│   ├── concept.py                  # Concept / InstanceConcept dataclasses
-│   ├── feature_config.py           # Toggle formulas F1-F6 (ablation)
-│   ├── ros_node.py                 # ROS2 node: publishes state, drives SS controller
+│   ├── awareness_manager.py         # Core AM: all 6 formulas + modular priority
+│   ├── knowledge_base.py            # Semantic graph with attention + epistemic error
+│   ├── instance_knowledge_base.py   # Instance-level graph (individual objects)
+│   ├── concept.py                   # Concept / InstanceConcept dataclasses
+│   ├── feature_config.py            # FeatureConfig (F1-F6 flags) + PriorityWeights
+│   ├── ros_node.py                  # ROS2 node: ticks AM, drives SS controller
+│   ├── book_finding_node.py         # ROS2 node: Find My Book Gazebo integration
+│   ├── scripted_navigator_node.py   # Demo helper: scripted room-tour for book_finding
 │   ├── baselines/
-│   │   ├── strategy.py             # AttentionStrategy Protocol (PEP 544)
-│   │   ├── always_on.py            # AlwaysOnBaseline
-│   │   └── reactive.py             # ReactiveBaseline
+│   │   ├── strategy.py              # AttentionStrategy Protocol (PEP 544)
+│   │   ├── always_on.py             # AlwaysOnBaseline
+│   │   └── reactive.py              # ReactiveBaseline
 │   ├── scenarios/
-│   │   ├── pv_inspection.py        # PV inspection scenario (CoreSense D7.1)
-│   │   ├── pv_inspection.ttl       # Turtle/RDF ontology for PV inspection
-│   │   ├── social_serving.py       # Social serving scenario (waiter robot, 10 persons)
-│   │   ├── social_serving.ttl      # Turtle/RDF ontology for social serving
-│   │   └── loader.py               # Generic TTL→KnowledgeBase loader (pyoxigraph)
+│   │   ├── pv_inspection.py / .ttl  # PV inspection scenario (CoreSense D7.1)
+│   │   ├── social_serving.py / .ttl # Social serving scenario (waiter robot, 10 persons)
+│   │   ├── book_finding.py / .ttl   # Find My Book scenario (MIRTE in house world)
+│   │   ├── abstract_n.py            # Abstract N-variable KB builder (Telogenesis eval)
+│   │   └── loader.py                # Generic TTL→KnowledgeBase loader (pyoxigraph)
 │   ├── visualization/
-│   │   ├── dashboard.py            # Dash app (live / replay / compare / ROS)
-│   │   ├── runner.py               # SimulationRunner (threaded real-time loop)
-│   │   ├── ros_source.py           # RosStateSource - live data from ROS2 topics
-│   │   ├── trace_logger.py         # TraceLogger - streams ticks to JSONL
-│   │   ├── replay_reader.py        # ReplayReader - offline playback
-│   │   └── snapshot.py             # Layout computation, snapshot serialisation
+│   │   ├── dashboard.py             # Dash app (live / replay / compare / ROS)
+│   │   ├── runner.py                # SimulationRunner (threaded real-time loop)
+│   │   ├── ros_source.py            # RosStateSource — live data from ROS2 topics
+│   │   ├── trace_logger.py          # TraceLogger — streams ticks to JSONL
+│   │   ├── replay_reader.py         # ReplayReader — offline playback
+│   │   └── snapshot.py              # Layout computation, snapshot serialisation
 │   └── evaluation/
-│       ├── metrics.py              # M1-M6 metric library (pure functions over traces)
-│       ├── batch.py                # Multi-run experiment driver
-│       ├── report.py               # Report generator (CSV, HTML, Markdown)
-│       └── __main__.py             # CLI: batch / report / ablation
+│       ├── metrics.py               # M1-M5 metric library (pure functions over traces)
+│       ├── experiments.py           # Six focused experiments (exp1-exp6)
+│       ├── abstract_runner.py       # Abstract N-variable simulation (5 strategies)
+│       └── __main__.py              # CLI: exp1-exp6/experiments/abstract/learnable-decay
 ├── demos/
-│   └── run_dashboard.py            # Dashboard entry point (live, replay, compare, ROS)
+│   └── run_dashboard.py             # Dashboard entry point (live, replay, compare, ROS)
 ├── launch/
-│   └── awareness_demo.launch.py    # ROS2 launch: awareness_node + dashboard
+│   ├── awareness_demo.launch.py     # ROS2 launch: awareness_node + dashboard
+│   ├── pv_inspection_demo.launch.py # ROS2 launch: PV inspection (awareness_node only)
+│   └── book_finding.launch.py       # Full Gazebo: gzserver + MIRTE + Nav2 + BookFindingNode
 └── test/
     ├── test_awareness_manager.py
     ├── test_knowledge_base.py
-    └── test_instance_knowledge_base.py
+    ├── test_instance_knowledge_base.py
+    └── test_prediction_error.py
 ```
+
+## Priority Formula
+
+The scheduling priority of concept c at each tick:
+
+```
+P(c) = w_ea    × (E(c) × A_mission(c))   — staleness × spreading activation
+     + w_surp  × prediction_error(c)      — Telogenesis surprise term (S̃_i)
+     + w_f2    × A_anticipatory(c)         — anticipatory horizon contribution
+     + w_urg   × urgency(c)               — instance-level unmet-need accumulator
+
+sort_key(c) = P(c) / travel_cost(c)^w_tc  — F6 spatial opportunity cost
+```
+
+All weights are continuous floats (default 1.0, except `w_surp` which defaults to 0.0
+for backward compatibility). Setting any weight to 0.0 removes that component.
+Weights are exposed as ROS2 parameters and as `PriorityWeights` in the API.
+`FeatureConfig` controls the structural formulas (F1–F6, learnable decay).
 
 ## Evaluation Metrics
 
-Metrics are computed from saved traces - no re-running required.
+Trace-based metrics (M1–M5) are pure functions over saved JSONL traces — no re-running required. Used by the dashboard compare view.
 
-| Metric | Description | Lower is better |
-|--------|-------------|-----------------|
-| M1 E_relevant | Mean epistemic error over goal-relevant concepts | Yes |
-| M2 E_irrelevant | Mean E over irrelevant concepts | - |
-| M3 budget_util | Fraction of budget used per tick | - |
-| M4 lag (s) | Seconds to recover E < 0.1 after goal transition | Yes |
-| M5 cache_hit | Was next goal's neighborhood pre-cached? | No (higher better) |
-| M6 rel_fraction | Fraction of schedule slots on relevant concepts | No (higher better) |
+| Key | Description | Better |
+|-----|-------------|--------|
+| M1 `m1_e_at_transition` | Max E in new-goal's 1-hop neighborhood at transition tick | ↓ |
+| M2 `m2_pre_transition_attn` | Mean attention to incoming-goal hood before the switch | ↑ |
+| M3 `m3_lag_seconds` | Seconds until E_max < 0.1 after goal transition | ↓ |
+| M4 `m4_e_relevant` | Run-mean epistemic error over goal-relevant concepts | ↓ |
+| M5 `m5_budget_util` | Schedule slots used / budget (sanity check) | — |
 
 **Goal neighborhood**: 1-hop semantic neighbors of the active goal with `decay_rate > 0`.
-Strategy-agnostic - matches ReactiveBaseline's active set exactly.
 
-### Key Result (budget x obs-interval sweep)
+### Experimental Results
 
-At observation interval T = 5 s and T = 10 s:
-- AM achieves **zero cognitive lag** after goal transitions vs Reactive 6 s / 2.6 s
-- AM M1 ≈ 0.027 (relevant concepts stay fresh) vs Reactive ≈ 0.099
-- AlwaysOn M1 ≈ 0.000 (uncapped budget - the lower bound)
-- Pooled M4 Mann-Whitney U: **p = 0.003** (AM vs Reactive, significant)
+**Exp 1 — Scaling** (abstract N-variable, 5 seeds, mean ± std):
+- PRIORITY-AM and PRIORITY-EPISTEMIC: **0.00 ± 0.00 ticks** detection latency at all N (up to N=96)
+- REACTIVE (goal-aware round-robin): **~2.4 ticks**, independent of N (cycles R=6 relevant only)
+- ROTATION (blind round-robin): grows linearly with N (~N/2 ticks)
+- Priority scheduling is O(1) in concept space size; goal-awareness alone bounds latency to R/budget
 
-T = 1 s is a degenerate regime (refresh amplitude too small to overcome drift for all
-strategies). See `reports/budget_obsint_sweep/summary.md` for the full breakdown.
+**Exp 2 — Goal conditioning** (K_overlap sweep 0→6, N=12, K=R=6, obs_interval=20 s, 5 seeds):
+- PRIORITY-AM and REACTIVE nearly identical in long-run E_relevant — goal-awareness captures most advantage
+- PRIORITY-EPISTEMIC flat at E_relevant ≈ 0.59 regardless of K_overlap (no goal structure)
+- AM advantage over EPISTEMIC: **0.33 at K_overlap=0** → **0.23 at K_overlap=6** (monotone, std < 0.01)
+- Epistemic priority (AM vs REACTIVE) shows as lower detection latency (exp1) not lower mean E
+
+**Exp 3 — Anticipatory horizon** (PV inspection, budget sweep B=1,2,4):
+- F2 on: E_mean = **0.13** at transition; F2 off: **0.19** (Δ = 0.05, consistent across all budgets)
+- Pre-transition emergency schedule hits: **30–42%** of budget slots (F2 on) vs **20–30%** (F2 off)
+- E_max is dominated by `airspace` (slow decay, far semantic path) and is identical in both conditions
+
+**Exp 4 — Instance KB** (multi-instance sweep, all 7 PV instances):
+- With instances: all 7 instances detected at **tick 0**, final E 0.73–0.97
+- Without instances: **never scheduled** (only parent class concepts are addressable)
+- Demonstrates generality: result holds for all instance types (panels, batteries, landing zones, camera)
+
+**Exp 5 — Formula ablation: F1 spreading activation** (abstract N-variable, N=12, K=6, R=3, K_overlap=0, budget=1, 5 seeds):
+- F1 on:  E_relevant = **0.21 ± 0.00** — spreading activation focuses budget on 1-hop relevant concepts
+- F1 off: E_relevant = **0.84 ± 0.00** — uniform A=1.0, volatile (2-hop, spiked) monopolize budget
+- Δ = **0.63** (positive = F1 reduces E_relevant; 3× improvement in goal-relevant freshness)
+
+**Exp 6 — F6 spatial opportunity cost** (social serving, serve_person_01 goal, robot at table_area, 50 ticks):
+- F6 on:  mean travel cost = **2.00 s**, same-zone fraction = **1.00** (always picks table_area persons)
+- F6 off: mean travel cost = **2.65 s**, same-zone fraction = **0.74** (26% restock_zone trips for beers)
+- Mann-Whitney U p = **0.00** — F6 significantly reduces mean travel cost
+
+**Learnable decay verification** (8 volatile + 8 stable concepts, 500 ticks, obs_interval=20 s):
+- Volatile group mean δ: **0.527**; stable group: **0.100** (ratio 5.27×)
+- Mann-Whitney U = 64 (perfect separation), **p = 2×10⁻⁴**
 
 ## Scenarios
 

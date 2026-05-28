@@ -104,12 +104,20 @@ class TraceLogger:
     # Per-tick recording (called from runner._run() under the AM lock)
     # ------------------------------------------------------------------
 
-    def record(self, elapsed: float, schedule: list[str]) -> None:
+    def record(
+        self,
+        elapsed: float,
+        schedule: list[str],
+        extra_events: list[dict] | None = None,
+    ) -> None:
         """
         Append one tick record to ticks.jsonl.
 
         Called after strategy.tick() has returned. Reads _channel_surprise via
         getattr for surprise events - see module docstring for rationale.
+
+        extra_events: additional event dicts appended verbatim (e.g. volatility
+        injections from the batch runner).
 
         Skipped silently if sample_rate > 1 and this tick is not sampled.
         """
@@ -173,6 +181,9 @@ class TraceLogger:
                     "ch_r":  round(ch["relational"].get(iid, 0.0), 4),
                     "ch_s":  round(ch["surprise"].get(iid, 0.0), 4),
                 }
+
+        if extra_events:
+            events.extend(extra_events)
 
         record = {
             "t": round(elapsed, 3),

@@ -198,6 +198,43 @@ class KnowledgeBase:
             )
 
     # ------------------------------------------------------------------
+    # Learnable decay (FeatureConfig.use_learnable_decay)
+    # ------------------------------------------------------------------
+
+    def update_decay_rate(
+        self,
+        concept_id: str,
+        surprise: float,
+        tau: float = 0.05,
+        delta_min: float = 0.01,
+        delta_max: float = 1.0,
+    ) -> float:
+        """
+        EMA update of a concept's decay rate from observed surprise.
+
+            δ_i ← (1 − τ) · δ_i  +  τ · S_i(t)
+
+        High surprise → larger δ → concept drifts faster when unobserved →
+        concept is scheduled more frequently. Self-organising adaptation to
+        volatility structure without labels (Telogenesis Experiment 3).
+
+        Args:
+            concept_id: Concept whose decay rate to update.
+            surprise:   Normalised surprise signal S_i ∈ [0, 1] (typically
+                        concept.prediction_error at observation time).
+            tau:        EMA smoothing rate (default 0.05).
+            delta_min:  Lower clamp for the learned decay rate.
+            delta_max:  Upper clamp for the learned decay rate.
+
+        Returns:
+            Updated decay rate.
+        """
+        concept = self._concepts[concept_id]
+        new_delta = (1.0 - tau) * concept.decay_rate + tau * surprise
+        concept.decay_rate = max(delta_min, min(delta_max, new_delta))
+        return concept.decay_rate
+
+    # ------------------------------------------------------------------
     # Accessors
     # ------------------------------------------------------------------
 

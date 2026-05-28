@@ -1,47 +1,26 @@
 """
 CLI entry point for the evaluation package.
 
-    python -m awareness_manager.evaluation batch --help
-    python -m awareness_manager.evaluation report --help
-    python -m awareness_manager.evaluation ablation --help
+Run all six experiments:
 
-Examples
---------
-Run the standard budget x observation_interval sweep:
+    python -m awareness_manager.evaluation experiments
 
-    python -m awareness_manager.evaluation batch \\
-        --scenario pv_inspection \\
-        --strategies awareness_manager,reactive,always_on \\
-        --budget 1,2,4 \\
-        --obs-interval 1.0,5.0,10.0 \\
-        --output experiments/budget_obsint_sweep/
+Run individual experiments:
 
-Generate the report:
+    python -m awareness_manager.evaluation exp1              # scaling (Telogenesis replication)
+    python -m awareness_manager.evaluation exp2              # goal conditioning (E×A)
+    python -m awareness_manager.evaluation exp3              # anticipatory horizon (F2 on/off, ETA sweep)
+    python -m awareness_manager.evaluation exp4              # instance KB vs class-only (multi-instance)
+    python -m awareness_manager.evaluation exp5              # formula ablation (F1 spreading activation)
+    python -m awareness_manager.evaluation exp6              # F6 spatial opportunity cost
 
-    python -m awareness_manager.evaluation report \\
-        --experiment experiments/budget_obsint_sweep/ \\
-        --output reports/budget_obsint_sweep/
+Run the abstract N-variable simulation directly (quick smoke test):
 
-Run the subtractive component ablation (Reactive, AM[F5], AM[F1+F5], AM[F2+F5], AM[full]):
+    python -m awareness_manager.evaluation abstract --quick
 
-    python -m awareness_manager.evaluation ablation \\
-        --output experiments/ablation_study/
+Learnable decay verification:
 
-Generate the ablation report:
-
-    python -m awareness_manager.evaluation report \\
-        --experiment experiments/ablation_study/ \\
-        --output reports/ablation_study/
-
-Alpha sweep (secondary experiment):
-
-    python -m awareness_manager.evaluation batch \\
-        --scenario pv_inspection \\
-        --strategies awareness_manager \\
-        --budget 2 \\
-        --obs-interval 10.0 \\
-        --alpha 0.3,0.5,0.7 \\
-        --output experiments/alpha_sweep/
+    python -m awareness_manager.evaluation learnable-decay
 """
 
 import argparse
@@ -49,125 +28,176 @@ import sys
 from pathlib import Path
 
 
-def _cmd_batch(args: argparse.Namespace) -> None:
-    from awareness_manager.evaluation.batch import run_experiment
+def _cmd_experiments(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.experiments import run_all
+    run_all(verbose=True)
 
-    strategies = [s.strip() for s in args.strategies.split(",")]
-    budgets = [int(b) for b in args.budget.split(",")]
-    obs_intervals = [float(t) for t in args.obs_interval.split(",")]
-    alphas = [float(a) for a in args.alpha.split(",")] if args.alpha else [0.5]
 
-    # Build param_grid as cross-product of budget x obs_interval x alpha
-    param_grid = [
-        {"budget": b, "observation_interval": oi, "alpha": a}
-        for b in budgets
-        for oi in obs_intervals
-        for a in alphas
-    ]
-    # Deduplicate if alpha is a single value (avoids confusing run IDs)
-    if len(alphas) == 1:
-        for p in param_grid:
-            del p["alpha"]
+def _cmd_exp1(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.experiments import experiment_scaling, print_exp1
+    seeds = list(range(42, 42 + args.seeds))
+    results = experiment_scaling(seeds=seeds)
+    print_exp1(results)
 
-    print(f"Scenario:   {args.scenario}")
-    print(f"Strategies: {strategies}")
-    print(f"Param grid: {len(param_grid)} combinations")
-    print(f"Total runs: {len(strategies) * len(param_grid)}")
-    print(f"Output:     {args.output}")
-    print()
 
-    run_experiment(
-        scenario=args.scenario,
-        strategies=strategies,
-        param_grid=param_grid,
-        output_dir=Path(args.output),
-        duration_s=args.duration,
-        dt=args.dt,
-        resume=not args.no_resume,
+def _cmd_exp2(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.experiments import experiment_goal_conditioning, print_exp2
+    seeds = list(range(42, 42 + args.seeds))
+    results = experiment_goal_conditioning(seeds=seeds)
+    print_exp2(results)
+
+
+def _cmd_exp3(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.experiments import experiment_anticipatory_horizon, print_exp3
+    results = experiment_anticipatory_horizon(
+        budget_values=args.budgets,
+        eta_values=args.etas,
+        obs_interval=args.obs_interval,
     )
+    print_exp3(results)
 
 
-def _cmd_report(args: argparse.Namespace) -> None:
-    from awareness_manager.evaluation.report import generate_report
-    generate_report(Path(args.experiment), Path(args.output))
-
-
-def _cmd_ablation(args: argparse.Namespace) -> None:
-    from awareness_manager.evaluation.batch import run_ablation_experiment
-
-    print(f"Scenario:      {args.scenario}")
-    print(f"Budget:        {args.budget}")
-    print(f"Obs interval:  {args.obs_interval} s")
-    print(f"Duration:      {args.duration} s")
-    print(f"Output:        {args.output}")
-    print()
-
-    run_ablation_experiment(
-        scenario=args.scenario,
+def _cmd_exp4(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.experiments import experiment_instance_kb, print_exp4
+    instances = args.instances if args.instances else None
+    results = experiment_instance_kb(
+        instances=instances,
         budget=args.budget,
         obs_interval=args.obs_interval,
-        output_dir=Path(args.output),
-        duration_s=args.duration,
-        dt=args.dt,
-        resume=not args.no_resume,
     )
+    print_exp4(results)
+
+
+def _cmd_exp5(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.experiments import experiment_formula_ablation, print_exp_ablation
+    seeds = list(range(42, 42 + args.seeds))
+    results = experiment_formula_ablation(
+        seeds=seeds,
+        obs_interval=args.obs_interval,
+    )
+    print_exp_ablation(results)
+
+
+def _cmd_exp6(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.experiments import experiment_f6_spatial_cost, print_exp6
+    results = experiment_f6_spatial_cost(
+        ticks=args.ticks,
+        budget=args.budget,
+        obs_interval=args.obs_interval,
+    )
+    print_exp6(results)
+
+
+def _cmd_abstract(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.abstract_runner import run_abstract_experiment
+    if args.quick:
+        N, K, R, ticks, seeds = 12, 2, 4, 100, [42]
+    else:
+        N, K, R, ticks, seeds = 24, 3, 6, 500, [42, 43, 44]
+    for seed in seeds:
+        results = run_abstract_experiment(
+            N=N, K=K, R=R, K_overlap=K,
+            budget=args.budget,
+            ticks=ticks,
+            obs_interval=args.obs_interval,
+            seed=seed,
+        )
+        print(f"\n--- seed={seed}, N={N}, K={K}, R={R}, budget={args.budget} ---")
+        for strat, d in results.items():
+            lat = d["mean_latency_ticks"]
+            rate = d["detection_rate"]
+            print(f"  {strat:<22}  latency={lat:.1f} ticks   detection_rate={rate:.2f}")
+
+
+def _cmd_learnable_decay(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.abstract_runner import learnable_decay_verification
+    result = learnable_decay_verification(
+        N_volatile=8,
+        N_stable=8,
+        budget=2,
+        ticks=500,
+        tau_decay=0.05,
+    )
+    print("\n=== Learnable Decay Verification ===")
+    print(f"  Volatile group mean δ: {result['volatile_delta_mean']:.4f}")
+    print(f"  Stable group mean δ:   {result['stable_delta_mean']:.4f}")
+    ratio = result["volatile_delta_mean"] / max(result["stable_delta_mean"], 1e-9)
+    print(f"  Ratio volatile/stable: {ratio:.2f}×")
+    print(f"  Mann-Whitney U:        U={result['u_stat']:.0f}, p={result['p_value']:.2e}")
+    if ratio > 2.0:
+        print("  ✓ Volatile concepts adapted to higher decay rates (expected)")
+    else:
+        print("  ✗ Ratio unexpectedly low — check tau_decay or ticks")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m awareness_manager.evaluation",
-        description="Awareness Manager - batch experiment and report CLI",
+        description="Awareness Manager — evaluation CLI",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # ── batch ─────────────────────────────────────────────────────────────
-    p_batch = sub.add_parser("batch", help="Run a batch experiment")
-    p_batch.add_argument("--scenario", default="pv_inspection",
-                         help="Scenario name (default: pv_inspection)")
-    p_batch.add_argument("--strategies",
-                         default="awareness_manager,reactive,always_on",
-                         help="Comma-separated strategy names")
-    p_batch.add_argument("--budget", default="1,2,4",
-                         help="Comma-separated budget values (default: 1,2,4)")
-    p_batch.add_argument("--obs-interval", default="1.0,5.0,10.0",
-                         help="Comma-separated observation intervals (default: 1.0,5.0,10.0)")
-    p_batch.add_argument("--alpha", default=None,
-                         help="Comma-separated alpha values for AM (default: 0.5, fixed)")
-    p_batch.add_argument("--output", default="experiments/batch/",
-                         help="Output directory")
-    p_batch.add_argument("--duration", type=float, default=70.0,
-                         help="Simulated duration per run in seconds (default: 70)")
-    p_batch.add_argument("--dt", type=float, default=0.1,
-                         help="Simulation timestep in seconds (default: 0.1)")
-    p_batch.add_argument("--no-resume", action="store_true",
-                         help="Re-run completed runs instead of skipping them")
-    p_batch.set_defaults(func=_cmd_batch)
+    # ── experiments ────────────────────────────────────────────────────────
+    p_all = sub.add_parser("experiments", help="Run all six experiments")
+    p_all.set_defaults(func=_cmd_experiments)
 
-    # ── report ────────────────────────────────────────────────────────────
-    p_report = sub.add_parser("report", help="Generate report from experiment")
-    p_report.add_argument("--experiment", required=True,
-                          help="Experiment directory containing manifest.json")
-    p_report.add_argument("--output", required=True,
-                          help="Output directory for report files")
-    p_report.set_defaults(func=_cmd_report)
+    # ── exp1 ───────────────────────────────────────────────────────────────
+    p1 = sub.add_parser("exp1", help="Exp 1: scaling — latency vs N and budget")
+    p1.add_argument("--seeds", type=int, default=5,
+                    help="Number of random seeds (default: 5)")
+    p1.set_defaults(func=_cmd_exp1)
 
-    # ── ablation ──────────────────────────────────────────────────────────
-    p_abl = sub.add_parser("ablation", help="Run the 5-step component ablation study")
-    p_abl.add_argument("--scenario", default="pv_inspection",
-                       help="Scenario name (default: pv_inspection)")
-    p_abl.add_argument("--budget", type=int, default=2,
-                       help="Refresh budget per tick (default: 2)")
-    p_abl.add_argument("--obs-interval", type=float, default=10.0,
-                       help="Observation interval T in seconds (default: 10.0)")
-    p_abl.add_argument("--output", default="experiments/ablation_study/",
-                       help="Output directory (default: experiments/ablation_study/)")
-    p_abl.add_argument("--duration", type=float, default=70.0,
-                       help="Simulated duration per run in seconds (default: 70)")
-    p_abl.add_argument("--dt", type=float, default=0.1,
-                       help="Simulation timestep in seconds (default: 0.1)")
-    p_abl.add_argument("--no-resume", action="store_true",
-                       help="Re-run completed runs instead of skipping them")
-    p_abl.set_defaults(func=_cmd_ablation)
+    # ── exp2 ───────────────────────────────────────────────────────────────
+    p2 = sub.add_parser("exp2", help="Exp 2: goal conditioning — K_overlap sweep")
+    p2.add_argument("--seeds", type=int, default=5,
+                    help="Number of random seeds (default: 5)")
+    p2.set_defaults(func=_cmd_exp2)
+
+    # ── exp3 ───────────────────────────────────────────────────────────────
+    p3 = sub.add_parser("exp3", help="Exp 3: anticipatory horizon — F2 on vs off, ETA sweep")
+    p3.add_argument("--budgets", type=int, nargs="+", default=[1, 2, 4],
+                    metavar="B", help="Budget values to sweep (default: 1 2 4)")
+    p3.add_argument("--etas", type=float, nargs="+", default=[20.0, 25.0, 30.0, 35.0, 40.0],
+                    metavar="ETA", help="ETA values to sweep in seconds (default: 20 25 30 35 40)")
+    p3.add_argument("--obs-interval", type=float, default=10.0)
+    p3.set_defaults(func=_cmd_exp3)
+
+    # ── exp4 ───────────────────────────────────────────────────────────────
+    p4 = sub.add_parser("exp4", help="Exp 4: instance KB vs class-only — multi-instance sweep")
+    p4.add_argument("--budget", type=int, default=2)
+    p4.add_argument("--obs-interval", type=float, default=10.0)
+    p4.add_argument("--instances", type=str, nargs="+", default=None,
+                    metavar="ID",
+                    help="Instance IDs to sweep (default: all 7 PV inspection instances)")
+    p4.set_defaults(func=_cmd_exp4)
+
+    # ── exp5 ───────────────────────────────────────────────────────────────
+    p5 = sub.add_parser("exp5", help="Exp 5: formula ablation — F1 spreading activation")
+    p5.add_argument("--seeds", type=int, default=5,
+                    help="Number of random seeds (default: 5)")
+    p5.add_argument("--obs-interval", type=float, default=10.0)
+    p5.set_defaults(func=_cmd_exp5)
+
+    # ── exp6 ───────────────────────────────────────────────────────────────
+    p6 = sub.add_parser("exp6", help="Exp 6: F6 spatial opportunity cost — social serving")
+    p6.add_argument("--ticks", type=int, default=50)
+    p6.add_argument("--budget", type=int, default=2)
+    p6.add_argument("--obs-interval", type=float, default=10.0)
+    p6.set_defaults(func=_cmd_exp6)
+
+    # ── abstract ──────────────────────────────────────────────────────────
+    p_abs = sub.add_parser("abstract",
+                            help="Run abstract N-variable scenario (smoke test)")
+    p_abs.add_argument("--budget", type=int, default=1)
+    p_abs.add_argument("--obs-interval", type=float, default=1.0)
+    p_abs.add_argument("--quick", action="store_true",
+                       help="Small parameters for fast smoke test")
+    p_abs.set_defaults(func=_cmd_abstract)
+
+    # ── learnable-decay ───────────────────────────────────────────────────
+    p_ld = sub.add_parser("learnable-decay",
+                           help="Verify learnable δ adapts volatile concepts")
+    p_ld.set_defaults(func=_cmd_learnable_decay)
 
     args = parser.parse_args()
     args.func(args)

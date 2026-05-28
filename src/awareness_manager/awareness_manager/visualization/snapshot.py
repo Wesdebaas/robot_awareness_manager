@@ -8,12 +8,10 @@ Passing the same positions dict on every poll keeps the graph completely stable.
 get_snapshot() is called on every dashboard poll (250 ms) under a threading
 lock held by SimulationRunner. It is a pure function: no side effects.
 
-Phase 2 additions:
-  - channel_color(): hue-by-dominant-channel + lightness-by-E fill color.
-  - Per-node channel fields in element data: ch_mission, ch_anticipatory,
-    ch_relational, ch_surprise - read by the inspector hover card.
-  - is_active_goal: distinguishes current goal from queued task nodes.
-  - has_instances: allows empty class containers to be visually de-emphasised.
+Node data fields include per-channel attention values (ch_mission, ch_anticipatory,
+ch_relational, ch_surprise) for the inspector hover card, and channel_color() maps
+dominant channel + epistemic error to a fill colour (blue=mission, teal=relational,
+orange=surprise, darker=higher E).
 """
 
 import colorsys
@@ -247,17 +245,17 @@ def get_snapshot(
     """
     Build a serialisable snapshot of AM state for the dashboard callback.
 
-    Node data fields (Phase 2 additions marked *):
+    Node data fields:
         id, label, type, concept_type / class_id
         attention, epistemic_error, prediction_error, decay_rate
         in_schedule, below_threshold
-        color            - fill hex, hue-by-dominant-channel + lightness-by-E (*)
-        ch_mission       - F1 attention from current goal (*)
-        ch_anticipatory  - F2 attention from queued goals (*)
-        ch_relational    - relational boost above class-gate (instances only) (*)
-        ch_surprise      - prediction-error violation boost (*)
-        is_active_goal   - 1 if this node is the current active goal (*)
-        has_instances    - 1 if this class node has ≥1 instance (*)
+        color           - fill hex, hue-by-dominant-channel + lightness-by-E
+        ch_mission      - F1 attention from current goal
+        ch_anticipatory - F2 attention from queued goals
+        ch_relational   - relational boost above class-gate (instances only)
+        ch_surprise     - prediction-error violation boost
+        is_active_goal  - 1 if this node is the current active goal
+        has_instances   - 1 if this class node has ≥1 instance
     """
     kb  = am.kb
     ikb = am.instance_kb
@@ -267,7 +265,8 @@ def get_snapshot(
     schedule_set = set(schedule)
     active_goal  = am.goal_id
     queued_ids   = {gid for gid, _, _ in am.mission_queue}
-    gamma        = getattr(am, 'urgency_weight', 1.0)
+    pw           = getattr(am, '_pw', None)
+    gamma        = pw.w_urgency if pw is not None else 1.0
 
     # Priority ranking: rank 1 = highest priority among all schedulable concepts.
     positive_prios = sorted(

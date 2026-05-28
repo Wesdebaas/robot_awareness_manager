@@ -2,7 +2,7 @@ import math
 from typing import TYPE_CHECKING
 
 from awareness_manager.concept import InstanceConcept, PresenceState
-from awareness_manager.feature_config import FeatureConfig
+from awareness_manager.feature_config import FeatureConfig, PriorityWeights
 from awareness_manager.knowledge_base import KnowledgeBase
 
 if TYPE_CHECKING:
@@ -60,11 +60,12 @@ class AwarenessManager:
     memory budget B, the maximum search depth is √B - 1, replacing the fixed
     max_distance with a resource-derived bound.
 
-    Priority formula:
-        priority(c) = E(c) x A(c)
+    Priority formula (see PriorityWeights for weights):
+        P(c)     = w_ea × (E(c) × A_mission(c)) + w_surprise × prediction_error(c)
+                 + w_f2 × A_anticipatory(c) + w_urgency × urgency(c)
+        sort_key = P(c) / travel_cost(c)^w_tc
 
-    Task nodes have decay_rate=0 so E stays 0 and priority stays 0 - they are
-    never scheduled.
+    Task nodes have decay_rate=0 so E stays 0 and are never scheduled.
     """
 
     def __init__(
@@ -85,7 +86,8 @@ class AwarenessManager:
         feature_config: FeatureConfig | None = None,
         zone_assignment: dict[str, str] | None = None,
         zone_travel_times: dict[tuple[str, str], float] | None = None,
-        urgency_weight: float = 1.0,
+        priority_weights: PriorityWeights | None = None,
+        tau_decay: float = 0.05,
     ) -> None:
         """
         Args:
@@ -118,8 +120,8 @@ class AwarenessManager:
                                        propagated to instance-graph neighbors on a
                                        prediction-error violation. Only used when
                                        instance_kb is provided.
-            certainty_threshold:       Probabilistic Forgetting gate (Phase 4).
-                                       If a concept's epistemic error E ≤ this value
+            certainty_threshold:       Probabilistic Forgetting gate. If a concept's
+                                       epistemic error E ≤ this value
                                        its scheduling priority is forced to 0 -
                                        the concept is considered sufficiently known
                                        and budget is redirected to uncertain concepts.
@@ -141,10 +143,14 @@ class AwarenessManager:
             zone_travel_times:         Dict mapping (zone_a, zone_b) → seconds.
                                        Symmetric lookup is tried automatically.
                                        Only used when feature_config.f6 is True.
-            urgency_weight:            Weight γ for the urgency term in the priority
-                                       formula: priority = E×A + γ×urgency.
-                                       Default 1.0 makes urgency contribute equally to
-                                       E×A. Set to 0.0 to disable urgency entirely.
+            priority_weights:          Continuous weights for each additive component
+                                       of the priority formula (see PriorityWeights).
+                                       None (default) uses all weights = 1.0.
+            tau_decay:                 EMA smoothing rate for learnable decay.
+                                       Only active when feature_config.use_learnable_decay
+                                       is True. At each observe() call the concept's δ is
+                                       updated: δ ← (1−τ)·δ + τ·prediction_error.
+                                       Default 0.05 matches Telogenesis Experiment 3.
         """
         if goal_id not in kb.concept_ids():
             raise ValueError(f"Goal concept '{goal_id}' not in knowledge base.")
@@ -165,12 +171,16 @@ class AwarenessManager:
         self._fc = feature_config if feature_config is not None else FeatureConfig()
         self._zone_assignment = zone_assignment or {}
         self._zone_travel_times = zone_travel_times or {}
-        self._urgency_weight = urgency_weight
+        if priority_weights is not None:
+            self._pw = priority_weights
+        else:
+            self._pw = PriorityWeights()
+        self._tau_decay = tau_decay
         self._robot_pos: str | None = None
         self._attention: dict[str, float] = {}
 
         # Per-channel attention contributions - stashed in _recompute_attention()
-        # for Phase 2 introspection (channel breakdown tooltip, color-by-source).
+        # for the dashboard inspector (channel breakdown tooltip, color-by-source).
         self._channel_mission: dict[str, float] = {}
         self._channel_anticipatory: dict[str, float] = {}
         self._channel_relational: dict[str, float] = {}
@@ -235,7 +245,7 @@ class AwarenessManager:
         during tick(). While queued, its attention values are blended into the
         current attention window, discounted by e^{-λ_level x ETA} (Formula 2).
 
-        Hierarchical Mission Horizons (Phase 5):
+        Hierarchical Mission Horizons:
             level='global'  λ = 0.05  - strategic background awareness; a goal
                                          100 s away still contributes ~0.01 x A.
                                          Use for overarching mission objectives.
@@ -341,21 +351,29 @@ class AwarenessManager:
             ValueError: if concept_id is not found in either KB.
         """
         if concept_id in self._kb.concept_ids():
-            decay_rate = self._kb.get_concept(concept_id).decay_rate
+            concept = self._kb.get_concept(concept_id)
+            decay_rate = concept.decay_rate
             if self._fc.use_f3_utility_saturation:
                 refresh = 1.0 - math.exp(-decay_rate * self._observation_interval)
             else:
                 refresh = 1.0  # F3 OFF: full over-refresh regardless of drift
             self._kb.refresh_concept(concept_id, refresh=refresh)
+            if self._fc.use_learnable_decay:
+                self._kb.update_decay_rate(concept_id, surprise=concept.prediction_error,
+                                           tau=self._tau_decay)
             return refresh
 
         if self._instance_kb is not None and concept_id in self._instance_kb.instance_ids():
-            decay_rate = self._instance_kb.get_instance(concept_id).decay_rate
+            instance = self._instance_kb.get_instance(concept_id)
+            decay_rate = instance.decay_rate
             if self._fc.use_f3_utility_saturation:
                 refresh = 1.0 - math.exp(-decay_rate * self._observation_interval)
             else:
                 refresh = 1.0  # F3 OFF: full over-refresh regardless of drift
             self._instance_kb.refresh_instance(concept_id, refresh=refresh)
+            if self._fc.use_learnable_decay:
+                self._instance_kb.update_decay_rate(concept_id, surprise=instance.prediction_error,
+                                                    tau=self._tau_decay)
             return refresh
 
         raise ValueError(
@@ -497,44 +515,78 @@ class AwarenessManager:
         """
         Current priority for every concept. Snapshot, not live.
 
-        Priority formula (Probabilistic Forgetting gate applied):
-            P(c) = E(c) x A(c)   if E(c) > certainty_threshold
-            P(c) = 0              if E(c) ≤ certainty_threshold
+        Modular weighted priority formula:
 
-        The certainty gate prevents wasting budget re-observing concepts that
-        are already known with sufficient confidence. With the default threshold
-        of 0.0 only task nodes (E=0) are excluded, preserving existing behaviour.
+            P(c) = w_ea   × (E(c) × A_mission(c))   if E(c) > certainty_threshold
+                 + w_surp × prediction_error(c)       [Telogenesis S̃_i — persistent]
+                 + w_f2   × A_anticipatory(c)
+                 + w_urg  × urgency(c)
+
+        Where:
+          A_mission(c)        — spreading-activation attention from the current goal (F1).
+          A_anticipatory(c)   — discounted attention from queued future goals (F2).
+          E(c)                — epistemic error (staleness) of concept c (F5).
+          prediction_error(c) — persistent normalized prediction error (set by violations).
+          urgency(c)          — instance-level unmet-need accumulator.
+
+        Weights are read from self._pw (PriorityWeights). Setting any weight to
+        0.0 removes that component entirely. w_surprise defaults to 0.0 (backward
+        compatible); set to 1.0 to activate the Telogenesis surprise term.
+
+        Surprise boosts (one-tick violation signals) are added to the mission
+        channel before the E×A gate, preserving their existing scheduling effect.
+        The persistent prediction_error is a separate additive term controlled by
+        w_surprise.
+
+        When F5 drift is disabled (use_f5_epistemic_drift=False), the E×A term
+        falls back to A_mission only (attention-only scheduling).
 
         Returns a merged dict covering both class-level and instance-level
         concepts when an InstanceKnowledgeBase is attached.
         """
         τ = self._certainty_threshold
         use_f5 = self._fc.use_f5_epistemic_drift
-        γ = self._urgency_weight
+        pw = self._pw
 
-        def _priority(e: float, a: float, urgency: float = 0.0) -> float:
-            # Priority = E×A (epistemic-error-weighted attention) + γ×urgency.
-            # Urgency is an independent additive dimension: an instance with high
-            # unmet-need urgency rises in the schedule even if E×A is modest.
-            # When F5 is off, drift is frozen so E stays constant; urgency still
-            # accumulates and contributes so the schedule remains meaningful.
+        def _score(
+            e: float,
+            a_mission: float,
+            a_anticipatory: float,
+            a_surprise: float = 0.0,
+            prediction_error: float = 0.0,
+            urgency: float = 0.0,
+        ) -> float:
+            a_ea = min(1.0, a_mission + a_surprise)
             if use_f5:
-                base = e * a if e > τ else 0.0
+                p_ea = pw.w_ea_product * (e * a_ea if e > τ else 0.0)
             else:
-                base = a
-            return base + γ * urgency
+                p_ea = pw.w_ea_product * a_ea
+            p_surprise = pw.w_surprise * prediction_error
+            p_f2  = pw.w_f2_anticipatory * a_anticipatory
+            p_urg = pw.w_urgency * urgency
+            return p_ea + p_surprise + p_f2 + p_urg
 
         result = {
-            cid: _priority(
+            cid: _score(
                 self._kb.get_concept(cid).epistemic_error,
-                self._attention.get(cid, 0.0),
+                self._channel_mission.get(cid, 0.0),
+                self._channel_anticipatory.get(cid, 0.0),
+                self._channel_surprise.get(cid, 0.0),
+                self._kb.get_concept(cid).prediction_error,
             )
             for cid in self._kb.concept_ids()
         }
         if self._instance_kb is not None:
             for iid in self._instance_kb.active_instance_ids():
                 inst = self._instance_kb.get_instance(iid)
-                p = _priority(inst.epistemic_error, self._attention.get(iid, 0.0), inst.urgency)
+                p = _score(
+                    inst.epistemic_error,
+                    self._channel_mission.get(iid, 0.0),
+                    self._channel_anticipatory.get(iid, 0.0),
+                    self._channel_surprise.get(iid, 0.0),
+                    inst.prediction_error,
+                    inst.urgency,
+                )
                 if inst.presence_state == PresenceState.SUSPECTED_ABSENT:
                     p *= self._suspected_absent_priority_scale
                 result[iid] = p
@@ -611,11 +663,6 @@ class AwarenessManager:
         self._require_instance_kb().reset_urgency(instance_id)
 
     @property
-    def urgency_weight(self) -> float:
-        """Weight γ applied to urgency in the priority formula (E×A + γ×urgency)."""
-        return self._urgency_weight
-
-    @property
     def kb(self) -> KnowledgeBase:
         """The class-level knowledge base."""
         return self._kb
@@ -665,7 +712,7 @@ class AwarenessManager:
             "memory_budget": self._memory_budget,
             "instance_relational_weight": self._instance_relational_weight,
             "suspected_absent_priority_scale": self._suspected_absent_priority_scale,
-            "urgency_weight": self._urgency_weight,
+            "tau_decay": self._tau_decay,
             "feature_config": {
                 "f1": self._fc.use_f1_spreading_activation,
                 "f2": self._fc.use_f2_anticipatory_horizon,
@@ -673,6 +720,14 @@ class AwarenessManager:
                 "f4": self._fc.use_f4_memory_budget,
                 "f5": self._fc.use_f5_epistemic_drift,
                 "f6": self._fc.use_f6_observation_cost,
+                "ld": self._fc.use_learnable_decay,
+            },
+            "priority_weights": {
+                "w_ea":  self._pw.w_ea_product,
+                "w_surp": self._pw.w_surprise,
+                "w_f2":  self._pw.w_f2_anticipatory,
+                "w_urg": self._pw.w_urgency,
+                "w_tc":  self._pw.w_travel_cost,
             },
         }
 
@@ -698,7 +753,7 @@ class AwarenessManager:
 
     def _recompute_attention(self) -> None:
         """
-        Formulas 1 + 2 + Hierarchical Mission Horizons (Phase 5):
+        Formulas 1 + 2 + Hierarchical Mission Horizons:
 
         Spreading activation from the current goal, blended with discounted
         attention from each queued future goal. Each queued goal uses a
@@ -716,7 +771,7 @@ class AwarenessManager:
 
         Per-channel stash: intermediate channel contributions are saved into
         _channel_mission, _channel_anticipatory, _channel_relational, and
-        _channel_surprise for Phase 2 introspection (breakdown tooltip,
+        _channel_surprise for the inspector panel (breakdown tooltip,
         color-by-source). The final _attention is unchanged from before.
         """
         # --- Channel 1: mission spreading activation from current goal (F1) ---
@@ -763,6 +818,22 @@ class AwarenessManager:
                 relational_attn[iid] = max(0.0, instance_attn.get(iid, 0.0) - base)
             combined.update(instance_attn)
 
+            # Per-channel instance entries for the modular priority formula:
+            # split the full instance attention proportionally between mission and
+            # anticipatory based on the class-level channel ratio.
+            for iid in self._instance_kb.active_instance_ids():
+                inst = self._instance_kb.get_instance(iid)
+                a_total = instance_attn.get(iid, 0.0)
+                a_cls_m = max((mission_attn.get(c, 0.0) for c in inst.all_class_ids), default=0.0)
+                a_cls_f2 = max((anticipatory_attn.get(c, 0.0) for c in inst.all_class_ids), default=0.0)
+                a_cls_sum = a_cls_m + a_cls_f2
+                if a_cls_sum > 1e-9:
+                    mission_attn[iid] = a_total * a_cls_m / a_cls_sum
+                    anticipatory_attn[iid] = a_total * a_cls_f2 / a_cls_sum
+                else:
+                    mission_attn[iid] = a_total
+                    anticipatory_attn[iid] = 0.0
+
         # --- Channel 3: surprise - violation boosts (Perceptual Prediction Error) ---
         # Applied after normal attention is computed; cleared on each tick so
         # the boost is visible for exactly one recompute cycle.
@@ -777,7 +848,7 @@ class AwarenessManager:
             combined[cid] = value
         self._attention_overrides.clear()
 
-        # Stash channels for Phase 2 introspection
+        # Stash per-channel contributions for the inspector panel
         self._channel_mission = mission_attn
         self._channel_anticipatory = anticipatory_attn
         self._channel_relational = relational_attn
@@ -832,6 +903,10 @@ class AwarenessManager:
         # worth refreshing - task nodes have decay_rate=0 so E stays 0 and
         # querying them is wasteful; gated concepts are already sufficiently known.
         #
+        # Task nodes (decay_rate=0) are always excluded regardless of F2 priority:
+        # the w_f2 anticipatory term can give them P > 0 when they're queued, but
+        # observing them is a no-op (refresh = 1 - exp(-0 × T) = 0).
+        #
         # Derived-mode class concepts are also excluded: their epistemic error is
         # read-only (recomputed from instance E values by update_derived_class_errors),
         # so calling observe() on them is a no-op that wastes budget capacity.
@@ -840,12 +915,19 @@ class AwarenessManager:
         schedulable = {
             k: v for k, v in positive.items()
             if k not in self._kb.concept_ids()  # instance IDs always pass through
-            or self._kb.get_concept(k).class_e_mode != 'derived'
+            or (self._kb.get_concept(k).class_e_mode != 'derived'
+                and self._kb.get_concept(k).decay_rate > 0.0)  # exclude task nodes
         }
-        # F6 - Spatial Opportunity Cost: sort by (E x A) / travel_cost so the AM
-        # prefers nearby high-urgency concepts over distant ones. When F6 is off or
-        # robot_pos is None, travel_cost = 1.0 everywhere and ordering is pure F5.
-        def _sort_key(cid: str) -> float:
-            return schedulable[cid] / self._travel_cost(cid)
+        # F6 - Spatial Opportunity Cost: sort by P(c) / travel_cost(c)^w_travel_cost.
+        # w_travel_cost=1 gives full F6 opportunity-cost ordering; 0 disables the
+        # penalty so ordering is pure priority. travel_cost=1.0 when F6 is off.
+        w_tc = self._pw.w_travel_cost
+        if w_tc <= 0.0:
+            def _sort_key(cid: str) -> float:
+                return schedulable[cid]
+        else:
+            def _sort_key(cid: str) -> float:
+                cost = self._travel_cost(cid)
+                return schedulable[cid] / (cost ** w_tc)
 
         return sorted(schedulable, key=_sort_key, reverse=True)[: self._budget]

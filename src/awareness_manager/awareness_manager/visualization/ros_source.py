@@ -122,7 +122,7 @@ class RosStateSource:
         elements: list[dict] = []
 
         # Compute priority rank across all concepts
-        gamma = 1.0  # urgency_weight not exposed over ROS; use default
+        gamma = 1.0  # w_urgency not published over ROS topics; use default
         all_prios = [(state.get(n, {}).get('P', 0.0), n) for n in state]
         positive_prios = sorted([(p, n) for p, n in all_prios if p > 0], reverse=True)
         n_schedulable = len(positive_prios)

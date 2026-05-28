@@ -1,21 +1,23 @@
 """
-scripted_navigator_node.py — Scripted room-tour navigator for the Find My Book demo.
+scripted_navigator_node.py — Awareness-driven room-tour navigator for the Find My Book demo.
 
-Drives the MIRTE robot through all rooms in a fixed sequence, publishing
-Nav2 goals so the AwarenessManager demonstrates F2 anticipatory pre-tuning
-as the robot approaches each room.
+Drives the MIRTE robot through rooms, publishing Nav2 goals. The AwarenessManager
+publishes `awareness/suggested_room` with the top-priority room at each tick.
+When a suggestion is available, the navigator follows it (closing the AM→navigation
+loop). When no suggestion has arrived since the last step, it falls back to the
+fixed room sequence.
 
-The AM is a completely passive observer here — it receives the same /goal_pose
-signal that a real decision-maker would send, and pre-tunes accordingly.
+This creates a reactive navigation strategy where the AM's epistemic priorities
+directly guide exploration order: rooms with high-E book instances get visited
+first, rather than cycling in a predetermined order.
 
-Visit order: kitchen → bathroom → bedroom → study → living_room → (repeat)
-The robot starts in living_room and the AM observes it there on startup,
-so the tour begins by moving away to the next room.
+Fallback sequence (when no suggestion): kitchen → bathroom → bedroom → study → living_room
+The robot starts in living_room; the AM observes it there on startup.
 
 Parameters:
     dwell_time   float  8.0    Seconds to stay in each room before advancing
     loop         bool   true   Whether to keep cycling after all rooms visited
-    start_delay  float  20.0   Seconds to wait before the first goal (Nav2 init)
+    start_delay  float  38.0   Seconds to wait before the first goal (Nav2 init)
 """
 
 import math
@@ -28,6 +30,7 @@ from rclpy.action import ActionClient
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from action_msgs.msg import GoalStatus
+from std_msgs.msg import String
 
 
 # Explicit nav waypoints verified against the nav2 map (free or allow_unknown reachable).
@@ -66,18 +69,37 @@ class ScriptedNavigatorNode(Node):
         self._waypoints = {room: _WAYPOINTS[room] for room in self.ROOM_SEQUENCE}
         self._current_pos: tuple[float, float] = _SPAWN_POS
 
+        # AM-suggested room (latest received); None = no suggestion yet.
+        # Protected by _suggested_lock; consumed once per navigation step.
+        self._suggested_room: str | None = None
+        self._suggested_lock = threading.Lock()
+
         self._nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._goal_pub   = self.create_publisher(PoseStamped, '/goal_pose', 10)
 
+        # Subscribe to AM room suggestions
+        self.create_subscription(
+            String, 'awareness/suggested_room', self._on_suggested_room, 10
+        )
+
         self.get_logger().info(
-            f"ScriptedNavigator: {' → '.join(self.ROOM_SEQUENCE)}, "
+            f"ScriptedNavigator: {' → '.join(self.ROOM_SEQUENCE)} (fallback), "
             f"dwell={self._dwell_time}s  loop={self._loop}  "
-            f"start_delay={self._start_delay}s"
+            f"start_delay={self._start_delay}s  AM-driven=True"
         )
 
         # Run the navigation loop in a background thread so spin() stays free
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    # ── Suggestion callback ───────────────────────────────────────────────────
+
+    def _on_suggested_room(self, msg: String) -> None:
+        """Store the latest AM room suggestion; consumed at the next navigation step."""
+        room = msg.data
+        if room in self._waypoints:
+            with self._suggested_lock:
+                self._suggested_room = room
 
     # ── Navigation loop ───────────────────────────────────────────────────────
 
@@ -98,7 +120,19 @@ class ScriptedNavigatorNode(Node):
 
         idx = 0
         while rclpy.ok():
-            room = self.ROOM_SEQUENCE[idx % len(self.ROOM_SEQUENCE)]
+            # Consume the latest AM suggestion (if any); fall back to fixed sequence.
+            with self._suggested_lock:
+                suggested = self._suggested_room
+                self._suggested_room = None  # consume
+
+            if suggested and suggested in self._waypoints:
+                room = suggested
+                self.get_logger().info(f"[AM]  Awareness-driven destination → '{room}'")
+            else:
+                room = self.ROOM_SEQUENCE[idx % len(self.ROOM_SEQUENCE)]
+                self.get_logger().info(f"[SEQ] Fallback sequence → '{room}'")
+                idx += 1
+
             x, y = self._waypoints[room]
 
             # Publish to /goal_pose first so BookFindingNode queues the
@@ -135,7 +169,6 @@ class ScriptedNavigatorNode(Node):
                     "attempts — skipping room."
                 )
 
-            idx += 1
             if not self._loop and idx >= len(self.ROOM_SEQUENCE):
                 self.get_logger().info("Room tour complete.")
                 break

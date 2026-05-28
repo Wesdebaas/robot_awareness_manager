@@ -61,7 +61,7 @@ from std_msgs.msg import String
 
 from awareness_manager.awareness_manager import AwarenessManager, _LAMBDA_BY_LEVEL
 from awareness_manager.concept import InstanceConcept, PresenceState
-from awareness_manager.feature_config import FeatureConfig
+from awareness_manager.feature_config import FeatureConfig, PriorityWeights
 from awareness_manager.instance_knowledge_base import InstanceKnowledgeBase
 from awareness_manager.knowledge_base import KnowledgeBase
 from awareness_manager.scenarios.pv_inspection import (
@@ -142,6 +142,13 @@ class AwarenessNode(Node):
         self.declare_parameter('f4', True)
         self.declare_parameter('f5', True)
         self.declare_parameter('f6', True)
+        self.declare_parameter('w_ea',     1.0)
+        self.declare_parameter('w_surp',   0.0)
+        self.declare_parameter('w_f2',     1.0)
+        self.declare_parameter('w_urg',    1.0)
+        self.declare_parameter('w_tc',     1.0)
+        self.declare_parameter('ld',       False)
+        self.declare_parameter('tau_decay', 0.05)
 
         scenario     = self.get_parameter('scenario').value
         goal_id      = self.get_parameter('goal_id').value
@@ -162,6 +169,14 @@ class AwarenessNode(Node):
             use_f4_memory_budget       =self.get_parameter('f4').value,
             use_f5_epistemic_drift     =self.get_parameter('f5').value,
             use_f6_observation_cost    =self.get_parameter('f6').value,
+            use_learnable_decay        =self.get_parameter('ld').value,
+        )
+        priority_weights = PriorityWeights(
+            w_ea_product      =self.get_parameter('w_ea').value,
+            w_surprise        =self.get_parameter('w_surp').value,
+            w_f2_anticipatory =self.get_parameter('w_f2').value,
+            w_urgency         =self.get_parameter('w_urg').value,
+            w_travel_cost     =self.get_parameter('w_tc').value,
         )
 
         # ---- Knowledge base + awareness manager ----
@@ -181,6 +196,8 @@ class AwarenessNode(Node):
             feature_config=feature_config,
             zone_assignment=zone_assignment,
             zone_travel_times=zone_travel_times,
+            priority_weights=priority_weights,
+            tau_decay=self.get_parameter('tau_decay').value,
         )
         self._schedule: list[str] = []
         self._tick_dt = 1.0 / tick_rate
