@@ -13,7 +13,7 @@ _FLAG_MAP: dict[str, str] = {
     'f2': 'use_f2_anticipatory_horizon',
     'f3': 'use_f3_utility_saturation',
     'f4': 'use_f4_memory_budget',
-    'f5': 'use_f5_epistemic_drift',
+    'f5': 'use_f5_epistemic_priority',
     'f6': 'use_f6_observation_cost',
     'ld': 'use_learnable_decay',
 }
@@ -39,7 +39,7 @@ class FeatureConfig:
     use_f2_anticipatory_horizon: bool = True
     use_f3_utility_saturation:   bool = True
     use_f4_memory_budget:        bool = True
-    use_f5_epistemic_drift:      bool = True
+    use_f5_epistemic_priority:   bool = True  # False → attention-only scheduling; drift still accumulates regardless
     use_f6_observation_cost:     bool = True
     use_learnable_decay:         bool = False
 

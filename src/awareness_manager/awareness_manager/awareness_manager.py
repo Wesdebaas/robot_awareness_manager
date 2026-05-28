@@ -538,14 +538,15 @@ class AwarenessManager:
         The persistent prediction_error is a separate additive term controlled by
         w_surprise.
 
-        When F5 drift is disabled (use_f5_epistemic_drift=False), the E×A term
-        falls back to A_mission only (attention-only scheduling).
+        When F5 epistemic priority is disabled (use_f5_epistemic_priority=False), the E×A term
+        falls back to A_mission only (attention-only scheduling). Note: drift still
+        accumulates regardless — this flag only controls whether E enters the score.
 
         Returns a merged dict covering both class-level and instance-level
         concepts when an InstanceKnowledgeBase is attached.
         """
         τ = self._certainty_threshold
-        use_f5 = self._fc.use_f5_epistemic_drift
+        use_f5 = self._fc.use_f5_epistemic_priority
         pw = self._pw
 
         def _score(
@@ -718,7 +719,7 @@ class AwarenessManager:
                 "f2": self._fc.use_f2_anticipatory_horizon,
                 "f3": self._fc.use_f3_utility_saturation,
                 "f4": self._fc.use_f4_memory_budget,
-                "f5": self._fc.use_f5_epistemic_drift,
+                "f5": self._fc.use_f5_epistemic_priority,
                 "f6": self._fc.use_f6_observation_cost,
                 "ld": self._fc.use_learnable_decay,
             },

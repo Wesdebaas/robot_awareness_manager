@@ -167,7 +167,7 @@ class AwarenessNode(Node):
             use_f2_anticipatory_horizon=self.get_parameter('f2').value,
             use_f3_utility_saturation  =self.get_parameter('f3').value,
             use_f4_memory_budget       =self.get_parameter('f4').value,
-            use_f5_epistemic_drift     =self.get_parameter('f5').value,
+            use_f5_epistemic_priority  =self.get_parameter('f5').value,
             use_f6_observation_cost    =self.get_parameter('f6').value,
             use_learnable_decay        =self.get_parameter('ld').value,
         )
