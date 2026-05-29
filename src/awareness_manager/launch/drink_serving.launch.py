@@ -1,15 +1,16 @@
 """
-drink_serving.launch.py — Step 1: two-room patrol (kitchen ↔ living_room).
+drink_serving.launch.py — Awareness-managed drink-serving Gazebo demo.
 
 Starts:
   1. Gazebo (gzserver + gzclient) with the KRR house world
   2. MIRTE Master robot (spawn + controllers) — delayed 20 s
   3. Nav2 (AMCL + navigation stack) + RViz
-  4. DrinkPatrolNode — loops kitchen ↔ living_room
+  4. DrinkServingNode — AM-integrated kitchen ↔ living_room patrol
 
 Usage:
     ros2 launch awareness_manager drink_serving.launch.py
-    ros2 launch awareness_manager drink_serving.launch.py dwell_time:=5.0
+    ros2 launch awareness_manager drink_serving.launch.py strategy:=reactive
+    ros2 launch awareness_manager drink_serving.launch.py budget:=2 observation_interval:=15.0
 """
 
 import os
@@ -35,9 +36,13 @@ from launch_ros.actions import Node
 def generate_launch_description() -> LaunchDescription:
 
     args = [
-        DeclareLaunchArgument('dwell_time',  default_value='8.0'),
-        DeclareLaunchArgument('start_delay', default_value='38.0'),
-        DeclareLaunchArgument('use_rviz',    default_value='true'),
+        DeclareLaunchArgument('budget',               default_value='2'),
+        DeclareLaunchArgument('observation_interval', default_value='15.0'),
+        DeclareLaunchArgument('dwell_time',           default_value='30.0'),
+        DeclareLaunchArgument('start_delay',          default_value='38.0'),
+        DeclareLaunchArgument('alpha',                default_value='0.5'),
+        DeclareLaunchArgument('strategy',             default_value='awareness_manager'),
+        DeclareLaunchArgument('use_rviz',             default_value='true'),
     ]
 
     pkg_robocup    = get_package_share_directory('robocup_home_simulation')
@@ -142,16 +147,20 @@ def generate_launch_description() -> LaunchDescription:
         launch_arguments={'use_rviz': LaunchConfiguration('use_rviz')}.items(),
     )
 
-    # ── Patrol node ───────────────────────────────────────────────────────────
+    # ── Drink serving node (AM-integrated patrol) ────────────────────────────
     patrol_node = Node(
         package='awareness_manager',
-        executable='drink_patrol_node',
-        name='drink_patrol',
+        executable='drink_serving_node',
+        name='drink_serving',
         output='screen',
         parameters=[{
-            'use_sim_time': True,
-            'dwell_time':   LaunchConfiguration('dwell_time'),
-            'start_delay':  LaunchConfiguration('start_delay'),
+            'use_sim_time':         True,
+            'budget':               LaunchConfiguration('budget'),
+            'observation_interval': LaunchConfiguration('observation_interval'),
+            'dwell_time':           LaunchConfiguration('dwell_time'),
+            'start_delay':          LaunchConfiguration('start_delay'),
+            'alpha':                LaunchConfiguration('alpha'),
+            'strategy':             LaunchConfiguration('strategy'),
         }],
     )
 

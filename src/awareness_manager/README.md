@@ -68,48 +68,33 @@ Open `http://localhost:8050` in a browser.
 
 ---
 
-## Batch Evaluation
+## Evaluation
 
-Run the standard budget × observation-interval sweep (27 runs):
-
-```bash
-python3 -m awareness_manager.evaluation batch \
-    --scenario pv_inspection \
-    --strategies awareness_manager,reactive,always_on \
-    --budget 1,2,4 \
-    --obs-interval 1.0,5.0,10.0 \
-    --output experiments/budget_obsint_sweep/
-```
-
-Run the 5-step component ablation study:
+Six focused experiments, each validating one grounding formula:
 
 ```bash
-python3 -m awareness_manager.evaluation ablation \
-    --output experiments/ablation_study/
+python3 -m awareness_manager.evaluation experiments      # all six
+python3 -m awareness_manager.evaluation exp1             # scaling / detection latency (F1)
+python3 -m awareness_manager.evaluation exp2             # goal conditioning (E×A)
+python3 -m awareness_manager.evaluation exp3             # anticipatory horizon (F2)
+python3 -m awareness_manager.evaluation exp4             # instance KB vs class-only
+python3 -m awareness_manager.evaluation exp5             # formula ablation: F1
+python3 -m awareness_manager.evaluation exp6             # F6 spatial opportunity cost
+python3 -m awareness_manager.evaluation abstract --quick # abstract N-variable smoke test
+python3 -m awareness_manager.evaluation learnable-decay  # learnable δ verification
 ```
-
-Generate a report from saved traces:
-
-```bash
-python3 -m awareness_manager.evaluation report \
-    --experiment experiments/budget_obsint_sweep/ \
-    --output reports/budget_obsint_sweep/
-```
-
-Outputs: `summary.csv`, `plots.html` (interactive Plotly figures), `summary.md`
-(metric table, per-regime breakdown, Mann-Whitney U tests).
 
 ---
 
 ## ROS2 Node
 
 ```bash
-# PV inspection / social serving (awareness_node):
+# Social serving / PV inspection (awareness_node + dashboard):
 ros2 launch awareness_manager awareness_demo.launch.py
-ros2 launch awareness_manager pv_inspection_demo.launch.py
 
-# Find My Book — full Gazebo simulation (MIRTE robot, Nav2, BookFindingNode):
-ros2 launch awareness_manager book_finding.launch.py
+# Drink Serving — full Gazebo simulation (MIRTE robot, Nav2, AM-integrated patrol):
+ros2 launch awareness_manager drink_serving.launch.py                     # AM condition
+ros2 launch awareness_manager drink_serving.launch.py strategy:=reactive  # Reactive baseline
 ```
 
 ---

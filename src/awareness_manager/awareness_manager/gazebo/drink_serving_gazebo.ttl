@@ -1,0 +1,104 @@
+@prefix am: <http://coresense.eu/awareness/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# ============================================================
+# Drink Serving Gazebo Scenario Ontology
+# Four-room RoboCup@Home house, MIRTE robot.
+#
+# Designed to demonstrate F1 (Spreading Activation):
+#   - Robot patrols kitchen → living_room
+#   - Kitchen has 5 items: 2 drinks (beer, wine) + 3 distractors
+#   - Semantic graph makes drinks 1-hop (A=0.50) from serve_drinks goal
+#     and distractors 3-hop (A=0.125), so AM always fills budget with drinks
+#   - ReactiveBaseline (hop_distance=1) sees both at 1 graph-edge hop and
+#     round-robins without attention weighting — drinks may be missed
+#   - At living_room trigger, robot reports drink availability via E threshold
+#
+# Edge weight → spreading activation distance → attention A = (1-alpha)^d:
+#   drink_class:  weight=1.0 → d=1.0 → A=(0.5)^1=0.50
+#   distractor:   weight=3.0 → d=3.0 → A=(0.5)^3=0.125
+#
+# Instances are NOT in this TTL — they are added dynamically
+# by DrinkServingNode when the robot first enters the kitchen.
+#
+# Decay rates (δ, s⁻¹):
+#   0.0   task/class nodes  — abstract, no drift
+#   0.01  location concepts — stable zone labels
+#   (instance decay 0.02 is set at runtime in the node)
+# ============================================================
+
+
+# --- Primary mission goal ---
+
+am:serve_drinks a am:Concept ;
+    am:conceptId "serve_drinks" ;
+    am:conceptType "task" ;
+    am:decayRate "0.0"^^xsd:double .
+
+
+# --- Class-level concepts (E derived from runtime instances) ---
+
+am:drink_class a am:Concept ;
+    am:conceptId "drink_class" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:distractor a am:Concept ;
+    am:conceptId "distractor" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+am:person_class a am:Concept ;
+    am:conceptId "person_class" ;
+    am:conceptType "object" ;
+    am:decayRate "0.0"^^xsd:double ;
+    am:classEMode "derived" ;
+    am:derivedAggregation "mean" ;
+    am:absentFallbackE "1.0"^^xsd:double .
+
+
+# --- Location concepts ---
+
+am:kitchen a am:Concept ;
+    am:conceptId "kitchen" ;
+    am:conceptType "location" ;
+    am:decayRate "0.01"^^xsd:double ;
+    am:observationCost "1.0"^^xsd:double ;
+    am:zone "kitchen" .
+
+am:living_room a am:Concept ;
+    am:conceptId "living_room" ;
+    am:conceptType "location" ;
+    am:decayRate "0.01"^^xsd:double ;
+    am:observationCost "1.0"^^xsd:double ;
+    am:zone "living_room" .
+
+
+# --- Semantic edges from primary goal ---
+
+# Drinks: direct connection, low weight → high attention (A=0.50)
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:drink_class ; am:weight "1.0"^^xsd:double .
+
+# Distractors: high weight → low attention (A=0.125)
+# Both drink_class and distractor are 1 graph-edge hop from serve_drinks,
+# so ReactiveBaseline (hop_distance=1) includes both in its active set.
+# AM differentiates via F1 weighted distance: drink at 1.0, distractor at 3.0.
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:distractor ; am:weight "3.0"^^xsd:double .
+
+# Locations and person (moderately relevant background)
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:kitchen ; am:weight "1.0"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:living_room ; am:weight "1.5"^^xsd:double .
+
+[] a am:SemanticEdge ;
+   am:source am:serve_drinks ; am:target am:person_class ; am:weight "1.5"^^xsd:double .

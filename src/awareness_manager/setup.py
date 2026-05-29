@@ -18,6 +18,7 @@ setup(
     ],
     package_data={
         'awareness_manager.scenarios': ['*.ttl'],
+        'awareness_manager.gazebo':    ['*.ttl'],
     },
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,8 +30,9 @@ setup(
     entry_points={
         'console_scripts': [
             'awareness_node          = awareness_manager.ros_node:main',
-            'drink_patrol_node       = awareness_manager.drink_patrol_node:main',
-            'scan_relay_node         = awareness_manager.scan_relay_node:main',
+            'drink_patrol_node       = awareness_manager.gazebo.drink_patrol_node:main',
+            'drink_serving_node      = awareness_manager.gazebo.drink_serving_node:main',
+            'scan_relay_node         = awareness_manager.gazebo.scan_relay_node:main',
             'run_dashboard           = demos.run_dashboard:main',
         ],
     },
