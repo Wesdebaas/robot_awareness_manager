@@ -114,20 +114,33 @@ def _cmd_learnable_decay(args: argparse.Namespace) -> None:
     result = learnable_decay_verification(
         N_volatile=8,
         N_stable=8,
+        N_start_high=4,
         budget=2,
         ticks=500,
         tau_decay=0.05,
+        seeds=[42, 43, 44, 45, 46],
     )
-    print("\n=== Learnable Decay Verification ===")
-    print(f"  Volatile group mean δ: {result['volatile_delta_mean']:.4f}")
-    print(f"  Stable group mean δ:   {result['stable_delta_mean']:.4f}")
-    ratio = result["volatile_delta_mean"] / max(result["stable_delta_mean"], 1e-9)
-    print(f"  Ratio volatile/stable: {ratio:.2f}×")
-    print(f"  Mann-Whitney U:        U={result['u_stat']:.0f}, p={result['p_value']:.2e}")
-    if ratio > 2.0:
-        print("  ✓ Volatile concepts adapted to higher decay rates (expected)")
+    print("\n=== Learnable Decay Verification (5 seeds) ===")
+    print()
+    print(f"  Group                    Mean δ (last seed)")
+    print(f"  {'Volatile (spiked)':<30} {result['volatile_delta_mean']:.4f}")
+    print(f"  {'Baseline stable (δ=0.1 start)':<30} {result['baseline_stable_delta_mean']:.4f}")
+    print(f"  {'Start-high stable (δ=0.5 start)':<30} {result['start_high_stable_delta_mean']:.4f}")
+    print()
+    ratio_last = result["volatile_delta_mean"] / max(result["baseline_stable_delta_mean"], 1e-9)
+    print(f"  Volatile / baseline_stable ratio (last seed): {ratio_last:.2f}×")
+    print(f"  Ratio across {len(result['per_seed'])} seeds: {result['ratio_mean']:.2f} ± {result['ratio_std']:.2f}")
+    print(f"  Mann-Whitney U (volatile > baseline_stable): U={result['u_stat']:.0f}, p={result['p_value']:.2e}")
+    print()
+    if ratio_last > 2.0:
+        print("  ✓ Volatile concepts adapted to higher decay rates")
     else:
         print("  ✗ Ratio unexpectedly low — check tau_decay or ticks")
+    sh_mean = result["start_high_stable_delta_mean"]
+    if sh_mean < 0.45:
+        print(f"  ✓ Start-high-stable group decreased from δ=0.5 → {sh_mean:.4f} (downward adaptation)")
+    else:
+        print(f"  ✗ Start-high-stable δ={sh_mean:.4f} — downward adaptation weaker than expected")
 
 
 def main() -> None:

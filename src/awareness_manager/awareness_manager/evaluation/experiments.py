@@ -124,11 +124,48 @@ def experiment_scaling(
     summary_N = _mean_latency_by(rows_N, "N")
     summary_budget = _mean_latency_by(rows_budget, "budget")
 
+    # Weight invariance: show that PRIORITY-AM latency ≈ 0 regardless of weight config.
+    # Three configs at fixed N=24, budget=1 — the 0.00 is architectural, not a tuning artefact.
+    from awareness_manager.feature_config import PriorityWeights as _PW
+    weight_configs = {
+        "w_ea only (default)":  _PW(),
+        "w_ea + w_f2=0.5":      _PW(w_f2_anticipatory=0.5),
+        "w_ea + w_surp=0.5":    _PW(w_surprise=0.5),
+    }
+    rows_weight: list[dict] = []
+    for label, pw in weight_configs.items():
+        for seed in seeds:
+            res = run_abstract_experiment(
+                N=24, K=K, R=R, K_overlap=K,
+                budget=1, ticks=ticks,
+                volatility_period=volatility_period,
+                obs_interval=obs_interval,
+                seed=seed,
+                strategies=["PRIORITY-AM"],
+                priority_weights=pw,
+            )
+            d = res["PRIORITY-AM"]
+            rows_weight.append({
+                "weight_config": label,
+                "seed": seed,
+                "mean_latency_ticks": d.get("mean_latency_ticks"),
+            })
+
+    summary_weight: dict[str, dict] = {}
+    for label in weight_configs:
+        lats = [r["mean_latency_ticks"] for r in rows_weight
+                if r["weight_config"] == label and r["mean_latency_ticks"] is not None]
+        if lats:
+            mean = round(statistics.mean(lats), 2)
+            std  = round(statistics.stdev(lats), 2) if len(lats) > 1 else 0.0
+            summary_weight[label] = {"mean": mean, "std": std}
+
     return {
         "latency_vs_N": rows_N,
         "latency_vs_budget": rows_budget,
         "summary_N": summary_N,
         "summary_budget": summary_budget,
+        "summary_weight_invariance": summary_weight,
     }
 
 
@@ -185,8 +222,9 @@ def experiment_goal_conditioning(
         seeds = [42, 43, 44, 45, 46]
 
     def _run_gc(strategy_name: str, N: int, K: int, R: int, K_overlap: int,
-                budget: int, ticks: int, obs_interval: float, sp: int, seed: int) -> float:
-        """Run one condition, return mean E of relevant concepts."""
+                budget: int, ticks: int, obs_interval: float, sp: int, seed: int) -> dict:
+        """Run one condition, return mean E of relevant concepts and detection latency."""
+        import random as _random
         kb, volatile_ids, relevant_ids = build_abstract_kb(
             N=N, K=K, R=R, K_overlap=K_overlap, seed=seed
         )
@@ -203,14 +241,32 @@ def experiment_goal_conditioning(
         else:
             strategy = _EpistemicStrategy(kb, budget)
 
+        # Pre-compute per-concept stochastic spike schedule (±30% jitter around sp).
+        spike_rng = _random.Random(seed ^ 0xDEAD)
+        spikes_by_tick: dict[int, list[str]] = {}
+        stagger = max(1, sp // max(len(volatile_ids), 1))
+        for idx, cid in enumerate(volatile_ids):
+            offset = stagger * idx
+            jitter = max(1, stagger // 2)
+            t = max(0, offset + spike_rng.randint(-jitter, jitter))
+            while t < ticks:
+                spikes_by_tick.setdefault(t, []).append(cid)
+                t += spike_rng.randint(max(1, int(0.7 * sp)), int(1.3 * sp))
+
+        # Detection latency tracking for volatile concepts that are also relevant.
+        relevant_volatile = set(volatile_ids) & relevant_set
+        pending_spikes: dict[str, int] = {}   # cid → spike_tick
+        latencies: list[float] = []
+
         e_relevant_sum = 0.0
         count = 0
 
         for tick_i in range(ticks):
-            # Periodic simultaneous volatile spikes (all K at once)
-            if tick_i % sp == 0:
-                for cid in volatile_ids:
-                    kb.get_concept(cid).epistemic_error = 1.0
+            # Inject per-concept spikes
+            for cid in spikes_by_tick.get(tick_i, []):
+                kb.get_concept(cid).epistemic_error = 1.0
+                if cid in relevant_volatile:
+                    pending_spikes[cid] = tick_i
 
             schedule = strategy.tick(_DT)
             if schedule:
@@ -220,13 +276,20 @@ def experiment_goal_conditioning(
                 else:
                     strategy.observe(top, obs_interval)
 
+            # Check detections for relevant-volatile concepts
+            for cid in list(pending_spikes):
+                if cid in schedule:
+                    latencies.append(tick_i - pending_spikes.pop(cid))
+
             # Track mean E of relevant concepts after this tick
             rel_e = [kb.get_concept(c).epistemic_error for c in relevant_set]
             if rel_e:
                 e_relevant_sum += sum(rel_e) / len(rel_e)
                 count += 1
 
-        return e_relevant_sum / count if count > 0 else float("nan")
+        mean_e = e_relevant_sum / count if count > 0 else float("nan")
+        mean_lat = sum(latencies) / len(latencies) if latencies else float("nan")
+        return {"mean_e_relevant": mean_e, "mean_latency_ticks": mean_lat}
 
     strategies_gc = ["PRIORITY-AM", "PRIORITY-EPISTEMIC", "REACTIVE"]
 
@@ -234,17 +297,19 @@ def experiment_goal_conditioning(
     for k_ov in K_overlap_values:
         for seed in seeds:
             for strat in strategies_gc:
-                mean_e = _run_gc(strat, N, K, R, k_ov, budget, ticks, obs_interval, spike_period, seed)
+                result = _run_gc(strat, N, K, R, k_ov, budget, ticks, obs_interval, spike_period, seed)
                 rows.append({
                     "strategy": strat,
                     "K_overlap": k_ov,
                     "seed": seed,
-                    "mean_e_relevant": mean_e,
+                    "mean_e_relevant": result["mean_e_relevant"],
+                    "mean_latency_ticks": result["mean_latency_ticks"],
                 })
 
-    def _stats_for(strat: str, k_ov: int) -> dict:
-        vals = [r["mean_e_relevant"] for r in rows
-                if r["strategy"] == strat and r["K_overlap"] == k_ov]
+    def _stats_for(strat: str, k_ov: int, key: str = "mean_e_relevant") -> dict:
+        vals = [r[key] for r in rows
+                if r["strategy"] == strat and r["K_overlap"] == k_ov
+                and not math.isnan(r[key])]
         if not vals:
             return {"mean": None, "std": None}
         mean = statistics.mean(vals)
@@ -261,10 +326,13 @@ def experiment_goal_conditioning(
             if am["mean"] is not None and ep["mean"] is not None else None
         )
         summary[k_ov] = {
-            "am":        am,
-            "epistemic": ep,
-            "reactive":  reac,
-            "am_advantage": adv_mean,
+            "am":            am,
+            "epistemic":     ep,
+            "reactive":      reac,
+            "am_advantage":  adv_mean,
+            "am_latency":    _stats_for("PRIORITY-AM",       k_ov, "mean_latency_ticks"),
+            "reactive_latency": _stats_for("REACTIVE",       k_ov, "mean_latency_ticks"),
+            "epistemic_latency": _stats_for("PRIORITY-EPISTEMIC", k_ov, "mean_latency_ticks"),
         }
 
     return {"rows": rows, "summary": summary}
@@ -407,12 +475,16 @@ def experiment_instance_kb(
     ticks: int = 30,
 ) -> dict[str, Any]:
     """
-    Exp 4: with vs without instance KB — swept over all PV inspection instances.
+    Structural demonstration (Exp 4): instance KB vs class-only — swept over all PV instances.
+
+    This is a structural demonstration rather than an inferential experiment. The class-only
+    condition scores zero by construction: without instance-level representation, individual
+    objects do not exist as addressable entities in the KB, so the AM has no mechanism to
+    schedule them. The result shows the structural requirement for instance representation.
 
     For each instance, the instance is spiked to E=1.0 at t=0. With the instance KB,
     the AM can schedule the specific instance directly; without it, only the parent class
-    is addressable and the instance is never individually observed. Running across all
-    instances shows generality: the result holds regardless of which instance is spiked.
+    is addressable and the instance is never individually observed.
 
     Returns dict with:
         "instances":  list[str] — instance IDs swept
@@ -551,6 +623,7 @@ def experiment_formula_ablation(
     spike_period = 30
 
     def _run_f1(f1_on: bool, seed: int) -> float:
+        import random as _random
         fc = FeatureConfig() if f1_on else FeatureConfig.with_disabled("f1")
         kb, volatile_ids, relevant_ids = build_abstract_kb(
             N=N, K=K, R=R, K_overlap=K_overlap, seed=seed
@@ -566,11 +639,22 @@ def experiment_formula_ablation(
             observation_interval=obs_interval, alpha=0.5,
             feature_config=fc,
         )
+        # Pre-compute per-concept stochastic spike schedule (±30% jitter).
+        spike_rng = _random.Random(seed ^ 0xDEAD)
+        spikes_by_tick: dict[int, list[str]] = {}
+        stagger_f1 = max(1, spike_period // max(len(volatile_ids), 1))
+        for idx, cid in enumerate(volatile_ids):
+            offset = stagger_f1 * idx
+            jitter = max(1, stagger_f1 // 2)
+            t = max(0, offset + spike_rng.randint(-jitter, jitter))
+            while t < ticks_f1:
+                spikes_by_tick.setdefault(t, []).append(cid)
+                t += spike_rng.randint(max(1, int(0.7 * spike_period)), int(1.3 * spike_period))
+
         e_sum, count = 0.0, 0
         for tick_i in range(ticks_f1):
-            if tick_i % spike_period == 0:
-                for cid in volatile_ids:
-                    kb.get_concept(cid).epistemic_error = 1.0
+            for cid in spikes_by_tick.get(tick_i, []):
+                kb.get_concept(cid).epistemic_error = 1.0
             schedule = am.tick(_DT)
             if schedule:
                 am.observe(schedule[0])
@@ -618,6 +702,7 @@ def experiment_f6_spatial_cost(
     budget: int = 2,
     obs_interval: float = 10.0,
     dt: float = 1.0,
+    seeds: list[int] | None = None,
 ) -> dict[str, Any]:
     """
     Exp 6: F6 spatial opportunity cost on the social serving scenario.
@@ -690,9 +775,15 @@ def experiment_f6_spatial_cost(
             return zone_cost + base
         return max(base, 1e-6)
 
+    import random as _random
+
+    if seeds is None:
+        seeds = [42, 43, 44, 45, 46]
+
     results: dict[str, Any] = {
         "conditions": ["f6_on", "f6_off"],
         "ticks": ticks,
+        "seeds": seeds,
         "robot_zone": robot_zone,
         "goal_id": f"serve_{serve_person}",
         "mean_cost": {},
@@ -702,40 +793,47 @@ def experiment_f6_spatial_cost(
     }
 
     for condition in ["f6_on", "f6_off"]:
-        kb  = build_social_serving_kb()
-        ikb = build_social_serving_instance_kb()
-        za  = load_zone_assignment()
-        goal_id = create_serve_goal(kb, serve_person, serve_drink)
-        pw  = PriorityWeights(w_travel_cost=1.0 if condition == "f6_on" else 0.0)
-        am  = AwarenessManager(
-            kb=kb,
-            goal_id=goal_id,
-            budget=budget,
-            observation_interval=obs_interval,
-            instance_kb=ikb,
-            zone_assignment=za,
-            zone_travel_times=ZONE_TRAVEL_TIMES,
-            priority_weights=pw,
-        )
+        all_costs: list[float] = []
+        same_zone_total = 0
 
-        per_tick: list[float] = []
-        same_zone_count = 0
+        for seed in seeds:
+            kb  = build_social_serving_kb()
+            ikb = build_social_serving_instance_kb()
+            za  = load_zone_assignment()
+            goal_id = create_serve_goal(kb, serve_person, serve_drink)
+            pw  = PriorityWeights(w_travel_cost=1.0 if condition == "f6_on" else 0.0)
+            am  = AwarenessManager(
+                kb=kb,
+                goal_id=goal_id,
+                budget=budget,
+                observation_interval=obs_interval,
+                instance_kb=ikb,
+                zone_assignment=za,
+                zone_travel_times=ZONE_TRAVEL_TIMES,
+                priority_weights=pw,
+            )
 
-        for _ in range(ticks):
-            schedule = am.tick(dt, robot_pos=robot_zone)
-            if schedule:
-                top = schedule[0]
-                cost = _travel_cost_local(top, kb, ikb, za)
-                per_tick.append(cost)
-                if za.get(top) == robot_zone:
-                    same_zone_count += 1
-                am.observe(top)
+            # Randomize initial epistemic errors so each seed produces a distinct
+            # ordering and travel-cost distribution, giving meaningful σ across seeds.
+            concept_rng = _random.Random(seed)
+            for cid in ikb.instance_ids():
+                ikb.get_instance(cid).epistemic_error = concept_rng.uniform(0.3, 0.7)
 
-        results["per_tick_costs"][condition] = per_tick
-        results["mean_cost"][condition] = round(statistics.mean(per_tick), 4) if per_tick else None
-        results["std_cost"][condition]  = round(statistics.stdev(per_tick), 4) if len(per_tick) > 1 else 0.0
+            for _ in range(ticks):
+                schedule = am.tick(dt, robot_pos=robot_zone)
+                if schedule:
+                    top = schedule[0]
+                    cost = _travel_cost_local(top, kb, ikb, za)
+                    all_costs.append(cost)
+                    if za.get(top) == robot_zone:
+                        same_zone_total += 1
+                    am.observe(top)
+
+        results["per_tick_costs"][condition] = all_costs
+        results["mean_cost"][condition] = round(statistics.mean(all_costs), 4) if all_costs else None
+        results["std_cost"][condition]  = round(statistics.stdev(all_costs), 4) if len(all_costs) > 1 else 0.0
         results["fraction_same_zone"][condition] = (
-            round(same_zone_count / len(per_tick), 4) if per_tick else None
+            round(same_zone_total / len(all_costs), 4) if all_costs else None
         )
 
     # Mann-Whitney U (one-sided): H1: F6-on cost < F6-off cost.
@@ -782,6 +880,15 @@ def print_exp1(results: dict) -> None:
             row += f"{_fmt_pm(d):>20}"
         print(row)
 
+    wi = results.get("summary_weight_invariance", {})
+    if wi:
+        print("\n--- PRIORITY-AM weight invariance (N=24, budget=1) ---")
+        print("  The near-zero latency is an architectural property of E×A priority,")
+        print("  not a consequence of any particular weight configuration.\n")
+        print(f"  {'Weight config':<30} {'Latency (mean±std)':>20}")
+        for label, stats in wi.items():
+            print(f"  {label:<30} {_fmt_pm(stats):>20}")
+
 
 def print_exp2(results: dict) -> None:
     print("\n=== Exp 2: Goal Conditioning — K_overlap Sweep ===\n")
@@ -799,6 +906,26 @@ def print_exp2(results: dict) -> None:
     print("  At K_overlap=0 (all volatile irrelevant): AM focuses budget on relevant, ignoring volatile.")
     print("  At K_overlap=K (all volatile relevant):  volatile are now goal-relevant; advantage shrinks"
           " but persists because EPISTEMIC still wastes budget on non-relevant concepts.")
+
+    # Detection latency for relevant-volatile concepts: AM's epistemic priority advantage
+    # over Reactive is most visible here (E×A → spiked concept jumps to top immediately).
+    any_lat = any(
+        row.get("am_latency", {}).get("mean") is not None
+        for row in results["summary"].values()
+    )
+    if any_lat:
+        print("\n  Detection latency for relevant-volatile concepts (↓ better):")
+        print(f"  {'K_overlap':>10} {'AM latency':>14} {'REACTIVE latency':>18} {'EPISTEMIC latency':>20}")
+        for k_ov, row in sorted(results["summary"].items()):
+            am_lat  = row.get("am_latency", {})
+            re_lat  = row.get("reactive_latency", {})
+            ep_lat  = row.get("epistemic_latency", {})
+            if am_lat.get("mean") is None and re_lat.get("mean") is None:
+                continue
+            print(f"  {k_ov:>10} {_fmt_pm(am_lat):>14} {_fmt_pm(re_lat):>18} {_fmt_pm(ep_lat):>20}")
+        print("  (Latency only reported at K_overlap > 0, where volatile concepts are also relevant.)")
+        print("  AM ≈ 0 ticks: epistemic priority surfaces spiked concepts immediately.")
+        print("  REACTIVE ≈ R/budget ticks: round-robin takes R cycles to return to spiked concept.")
 
 
 def print_exp3(results: dict) -> None:
@@ -858,7 +985,11 @@ def print_exp3(results: dict) -> None:
 
 
 def print_exp4(results: dict) -> None:
-    print(f"\n=== Exp 4: Instance KB — Multi-Instance Sweep ===\n")
+    print(f"\n=== Structural Demonstration — Instance KB (Exp 4) ===\n")
+    print("  NOTE: This is a structural demonstration, not an inferential experiment.")
+    print("  The class-only condition cannot individually address instances by design.")
+    print("  The table shows the structural requirement for instance representation;\n"
+          "  it does not measure a performance gap between two comparable conditions.\n")
     print(f"{'Instance':<14} {'Parent class':<14} {'Det. (with)':>11} {'Det. (wo)':>10} "
           f"{'Final E (with)':>14} {'Hits (with)':>12} {'Hits (wo)':>10}")
     print("-" * 80)
@@ -877,8 +1008,9 @@ def print_exp4(results: dict) -> None:
               f"{a_wi:>12} "
               f"{a_wo:>10}")
     print(f"\n  With instances: all spiked instances are detected immediately (tick 0 or 1).")
-    print(f"  Without instances: never scheduled — parent class concepts are not individually addressable.")
-    print(f"  Demonstrates generality: result holds for all {len(results['instances'])} instance types.")
+    print(f"  Without instances: never scheduled — parent class concepts are not individually")
+    print(f"  addressable; the class-only AM has no mechanism to target individuals.")
+    print(f"  Generality: result holds for all {len(results['instances'])} instance types in the PV scenario.")
 
 
 def print_exp_ablation(results: dict) -> None:
@@ -904,11 +1036,14 @@ def print_exp_ablation(results: dict) -> None:
 
 
 def print_exp6(results: dict) -> None:
+    n_seeds = len(results.get("seeds", [1]))
     print("\n=== Exp 6: F6 Spatial Opportunity Cost ===\n")
     print(f"  Goal: {results.get('goal_id', 'serve_person_01')} — attention asymmetry:")
     print(f"  goal → person (weight=3.0) → A_person_instance = 0.125 (table_area, cost=2.0 s)")
     print(f"  goal → beer   (weight=1.0) → A_beer_instance   = 0.50  (restock_zone, cost=4.5 s)")
-    print(f"  Robot fixed at: {results['robot_zone']}, ticks: {results['ticks']}, budget: 2\n")
+    print(f"  Robot fixed at: {results['robot_zone']}, ticks/seed: {results['ticks']}, "
+          f"seeds: {n_seeds}, budget: 2")
+    print(f"  Initial E values randomised per seed (Uniform[0.3, 0.7]) to produce real variance.\n")
     print(f"  F6-off: raw E×A → beers win (higher attention), frequent restock_zone trips.")
     print(f"  F6-on:  sort by E×A / travel_cost → table_area persons preferred.\n")
     print(f"  {'Condition':<12} {'Mean travel cost ↓':>20} {'Std':>8} {'Same-zone frac ↑':>18}")
@@ -925,6 +1060,7 @@ def print_exp6(results: dict) -> None:
         print("  ✗ Difference not statistically significant")
     print("\n  Interpretation: F6 divides scheduling priority by travel cost, biasing the")
     print("  scheduler toward concepts the robot can observe without zone transitions.")
+    print(f"  Result aggregated over {n_seeds} seeds with varied initial E, giving non-zero σ.")
 
 
 def run_all(verbose: bool = True) -> dict[str, Any]:

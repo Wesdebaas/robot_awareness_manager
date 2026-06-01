@@ -194,6 +194,7 @@ def _run_single(
     seed: int,
     w_surprise: float = 0.0,
     feature_config=None,  # FeatureConfig | None — only used for PRIORITY-AM
+    priority_weights=None,  # PriorityWeights | None — only used for PRIORITY-AM
 ) -> dict:
     """
     Run one abstract scenario with the given strategy.
@@ -207,6 +208,7 @@ def _run_single(
     # Build strategy
     if strategy_name == "PRIORITY-AM":
         fc = feature_config if feature_config is not None else FeatureConfig()
+        pw = priority_weights if priority_weights is not None else PriorityWeights(w_surprise=w_surprise)
         strategy = AwarenessManager(
             kb=kb,
             goal_id="goal",
@@ -214,7 +216,7 @@ def _run_single(
             observation_interval=obs_interval,
             alpha=0.5,
             feature_config=fc,
-            priority_weights=PriorityWeights(w_surprise=w_surprise),
+            priority_weights=pw,
         )
     elif strategy_name == "PRIORITY-EPISTEMIC":
         strategy = _EpistemicStrategy(kb, budget)
@@ -227,15 +229,23 @@ def _run_single(
     else:
         raise ValueError(f"Unknown strategy: {strategy_name}")
 
-    # Build volatility schedule: volatile concepts spike every volatility_period ticks
-    # staggered by their index so they don't all spike on the same tick.
+    # Build volatility schedule: volatile concepts spike every ~volatility_period ticks,
+    # staggered and jittered so each seed produces a distinct schedule.
+    # spike_rng is seeded independently from the KB-construction seed so the two sources
+    # of randomness don't alias each other.
+    spike_rng = random.Random(seed ^ 0xDEAD)
     stagger = max(1, volatility_period // max(K, 1))
     spike_times: list[tuple[str, int]] = []
     for idx, cid in enumerate(volatile_ids):
-        t = stagger * idx  # first spike offset
+        offset = stagger * idx
+        jitter = max(1, stagger // 2)
+        t = max(0, offset + spike_rng.randint(-jitter, jitter))
         while t < ticks:
             spike_times.append((cid, t))
-            t += volatility_period
+            t += spike_rng.randint(
+                max(1, int(0.7 * volatility_period)),
+                int(1.3 * volatility_period),
+            )
 
     # Index spike times by tick
     spikes_by_tick: dict[int, list[str]] = {}
@@ -310,6 +320,7 @@ def run_abstract_experiment(
     seed: int = 42,
     strategies: list[StrategyName] | None = None,
     w_surprise: float = 0.0,
+    priority_weights=None,  # PriorityWeights | None — forwarded to PRIORITY-AM only
 ) -> dict[str, dict]:
     """
     Run all four strategies on the abstract N-variable scenario.
@@ -326,6 +337,8 @@ def run_abstract_experiment(
         seed:               Random seed.
         strategies:         Which strategies to run (default: all four).
         w_surprise:         w_surprise weight for PRIORITY-AM (0=off, 1=on).
+        priority_weights:   PriorityWeights override for PRIORITY-AM (takes precedence over
+                            w_surprise when provided).
 
     Returns:
         Dict keyed by strategy name → result dict with detection latency stats.
@@ -346,6 +359,7 @@ def run_abstract_experiment(
             obs_interval=obs_interval,
             seed=seed,
             w_surprise=w_surprise,
+            priority_weights=priority_weights,
         )
     return results
 
@@ -353,83 +367,155 @@ def run_abstract_experiment(
 def learnable_decay_verification(
     N_stable: int = 8,
     N_volatile: int = 8,
+    N_start_high: int = 4,
     budget: int = 2,
     ticks: int = 500,
     volatility_period: int = 30,
     obs_interval: float = 20.0,
     tau_decay: float = 0.05,
     seed: int = 42,
+    seeds: list[int] | None = None,
 ) -> dict:
     """
     Verification experiment for learnable δ (Telogenesis Experiment 3 analog).
 
-    Sets up N_volatile + N_stable concepts. The volatile group is periodically
-    spiked; the stable group never changes. With learnable_decay=True, the
-    volatile concepts should end with significantly higher δ than the stable ones.
+    Three groups of concepts, all observed by the AM:
+      - volatile:        periodically spiked → δ should rise
+      - baseline_stable: never spiked, start at δ=0.1 → δ should stay low
+      - start_high_stable: never spiked, start at δ=0.5 → δ should decrease
+
+    The start_high_stable group demonstrates bidirectional adaptation: the
+    mechanism self-organises toward the true volatility level whether it starts
+    too high or too low.
+
+    When `seeds` is provided (default: [42,43,44,45,46]) the experiment runs once
+    per seed and reports mean ± std of the volatile/stable δ ratio.
 
     Returns a dict with:
-        "volatile_delta_mean": mean δ of volatile group at end
-        "stable_delta_mean":   mean δ of stable group at end
-        "volatile_delta_all":  list of final δ values for volatile concepts
-        "stable_delta_all":    list of final δ values for stable concepts
-        "ticks":               simulation length
+        "volatile_delta_mean":      mean δ of volatile group (last seed, or mean across seeds)
+        "baseline_stable_delta_mean": mean δ of baseline stable group
+        "start_high_stable_delta_mean": mean δ of start-high group (should be < 0.5 at end)
+        "volatile_delta_all":       list of final δ for volatile (last seed)
+        "baseline_stable_delta_all":list of final δ for baseline stable (last seed)
+        "start_high_stable_delta_all": list of final δ for start-high group (last seed)
+        "ticks":                    simulation length
+        "u_stat":                   Mann-Whitney U (volatile vs baseline_stable)
+        "p_value":                  one-sided p-value
+        "ratio_mean":               mean of (volatile_mean / stable_mean) across seeds
+        "ratio_std":                std of that ratio
+        "per_seed":                 list of per-seed result dicts
     """
-    N = N_volatile + N_stable
-    K = N_volatile
-    R = N  # all concepts are relevant so AM schedules them
+    if seeds is None:
+        seeds = [42, 43, 44, 45, 46]
 
-    kb, volatile_ids, _ = build_abstract_kb(
-        N=N, K=K, R=R, K_overlap=K, seed=seed
+    per_seed_results: list[dict] = []
+
+    for run_seed in seeds:
+        N = N_volatile + N_stable
+        K = N_volatile
+        R = N  # all concepts are relevant so AM schedules them
+
+        kb, volatile_ids, _ = build_abstract_kb(
+            N=N, K=K, R=R, K_overlap=K, seed=run_seed
+        )
+
+        all_stable = [cid for cid in kb.concept_ids()
+                      if cid != "goal" and cid not in volatile_ids]
+        # First N_start_high stable concepts form the start-high group.
+        start_high_ids = all_stable[:N_start_high]
+        baseline_stable_ids = all_stable[N_start_high:]
+
+        # Give start-high-stable concepts an inflated initial δ so we can observe
+        # the mechanism pulling it back down toward the true (low) volatility level.
+        for cid in start_high_ids:
+            kb.get_concept(cid).decay_rate = 0.5
+
+        fc = FeatureConfig(use_learnable_decay=True)
+        strategy = AwarenessManager(
+            kb=kb,
+            goal_id="goal",
+            budget=budget,
+            observation_interval=obs_interval,
+            alpha=0.5,
+            feature_config=fc,
+            priority_weights=PriorityWeights(w_surprise=1.0),
+            tau_decay=tau_decay,
+        )
+
+        spike_rng = random.Random(run_seed ^ 0xDEAD)
+        stagger = max(1, volatility_period // max(K, 1))
+        spikes_by_tick: dict[int, list[str]] = {}
+        for idx, cid in enumerate(volatile_ids):
+            offset = stagger * idx
+            jitter = max(1, stagger // 2)
+            t = max(0, offset + spike_rng.randint(-jitter, jitter))
+            while t < ticks:
+                spikes_by_tick.setdefault(t, []).append(cid)
+                t += spike_rng.randint(
+                    max(1, int(0.7 * volatility_period)),
+                    int(1.3 * volatility_period),
+                )
+
+        for tick_i in range(ticks):
+            for cid in spikes_by_tick.get(tick_i, []):
+                concept = kb.get_concept(cid)
+                concept.epistemic_error = 1.0
+                concept.prediction_error = 1.0
+            schedule = strategy.tick(_DT)
+            for cid in schedule:
+                strategy.observe(cid)
+
+        v_deltas  = [kb.get_concept(c).decay_rate for c in volatile_ids]
+        bs_deltas = [kb.get_concept(c).decay_rate for c in baseline_stable_ids]
+        sh_deltas = [kb.get_concept(c).decay_rate for c in start_high_ids]
+
+        v_mean  = sum(v_deltas)  / len(v_deltas)  if v_deltas  else float("nan")
+        bs_mean = sum(bs_deltas) / len(bs_deltas) if bs_deltas else float("nan")
+        ratio   = v_mean / bs_mean if bs_mean > 0 else float("nan")
+
+        per_seed_results.append({
+            "seed": run_seed,
+            "volatile_delta_mean": v_mean,
+            "baseline_stable_delta_mean": bs_mean,
+            "start_high_stable_delta_mean": sum(sh_deltas) / len(sh_deltas) if sh_deltas else float("nan"),
+            "ratio": ratio,
+            "volatile_delta_all": v_deltas,
+            "baseline_stable_delta_all": bs_deltas,
+            "start_high_stable_delta_all": sh_deltas,
+        })
+
+    # Aggregate across seeds
+    ratios = [s["ratio"] for s in per_seed_results if not math.isnan(s["ratio"])]
+    ratio_mean = sum(ratios) / len(ratios) if ratios else float("nan")
+    ratio_std  = (
+        math.sqrt(sum((r - ratio_mean) ** 2 for r in ratios) / (len(ratios) - 1))
+        if len(ratios) > 1 else 0.0
     )
 
-    fc = FeatureConfig(use_learnable_decay=True)
-    strategy = AwarenessManager(
-        kb=kb,
-        goal_id="goal",
-        budget=budget,
-        observation_interval=obs_interval,
-        alpha=0.5,
-        feature_config=fc,
-        priority_weights=PriorityWeights(w_surprise=1.0),
-        tau_decay=tau_decay,
-    )
-
-    stagger = max(1, volatility_period // max(K, 1))
-    spikes_by_tick: dict[int, list[str]] = {}
-    for idx, cid in enumerate(volatile_ids):
-        t = stagger * idx
-        while t < ticks:
-            spikes_by_tick.setdefault(t, []).append(cid)
-            t += volatility_period
-
-    stable_ids = [cid for cid in kb.concept_ids()
-                  if cid != "goal" and cid not in volatile_ids]
-
-    for tick_i in range(ticks):
-        for cid in spikes_by_tick.get(tick_i, []):
-            concept = kb.get_concept(cid)
-            concept.epistemic_error = 1.0
-            concept.prediction_error = 1.0
-        schedule = strategy.tick(_DT)
-        for cid in schedule:  # observe all budgeted concepts so δ updates spread
-            strategy.observe(cid)
-
-    volatile_deltas = [kb.get_concept(c).decay_rate for c in volatile_ids]
-    stable_deltas   = [kb.get_concept(c).decay_rate for c in stable_ids]
-
+    # Use last seed's data for per-concept lists and Mann-Whitney U
+    last = per_seed_results[-1]
     from scipy import stats as _stats
-    # Mann-Whitney U: non-parametric, handles the floor-clamped stable group.
-    # One-sided: volatile δ > stable δ.
-    u_stat, p_value = _stats.mannwhitneyu(volatile_deltas, stable_deltas, alternative="greater")
+    u_stat, p_value = _stats.mannwhitneyu(
+        last["volatile_delta_all"], last["baseline_stable_delta_all"],
+        alternative="greater",
+    )
 
     return {
-        "volatile_delta_mean": sum(volatile_deltas) / len(volatile_deltas),
-        "stable_delta_mean":   sum(stable_deltas) / len(stable_deltas),
-        "volatile_delta_all":  volatile_deltas,
-        "stable_delta_all":    stable_deltas,
-        "ticks": ticks,
-        "u_stat": u_stat,
-        "p_value": p_value,
+        "volatile_delta_mean":             last["volatile_delta_mean"],
+        "baseline_stable_delta_mean":      last["baseline_stable_delta_mean"],
+        "start_high_stable_delta_mean":    last["start_high_stable_delta_mean"],
+        "volatile_delta_all":              last["volatile_delta_all"],
+        "baseline_stable_delta_all":       last["baseline_stable_delta_all"],
+        "start_high_stable_delta_all":     last["start_high_stable_delta_all"],
+        "ticks":                           ticks,
+        "u_stat":                          u_stat,
+        "p_value":                         p_value,
+        "ratio_mean":                      ratio_mean,
+        "ratio_std":                       ratio_std,
+        "per_seed":                        per_seed_results,
+        # Legacy keys for backward compatibility
+        "stable_delta_mean":   last["baseline_stable_delta_mean"],
+        "stable_delta_all":    last["baseline_stable_delta_all"],
     }
 
 
