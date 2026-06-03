@@ -78,6 +78,7 @@ from awareness_manager.scenarios.social_serving import (
 )
 from awareness_manager_msgs.action import QueueGoal
 from awareness_manager_msgs.srv import QueryConcept, SetAttention
+from triplestar_msgs.srv import SPARQLQuery
 
 
 # Social serving controller constants (mirror run_dashboard.py)
@@ -265,6 +266,9 @@ class AwarenessNode(Node):
             execute_callback=self._action_execute_callback,
             callback_group=self._cb_group,
         )
+
+        # ---- triplestar_kb client (optional — used when triplestar_kb node is running) ----
+        self._kb_client = self.create_client(SPARQLQuery, 'triplestar_core/query')
 
         # ---- Timers ----
         self.create_timer(self._tick_dt, self._tick_cb, callback_group=self._cb_group)
