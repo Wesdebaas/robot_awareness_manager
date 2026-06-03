@@ -69,7 +69,7 @@ class DrinkServingNode(Node):
 
         self.declare_parameter('budget',               2)
         self.declare_parameter('observation_interval', 15.0)
-        self.declare_parameter('dwell_time',           30.0)
+        self.declare_parameter('dwell_time',           5.0)
         self.declare_parameter('start_delay',          38.0)
         self.declare_parameter('alpha',                0.5)
         self.declare_parameter('strategy',             'awareness_manager')
@@ -156,6 +156,8 @@ class DrinkServingNode(Node):
         self._publish_state(schedule)
 
     def _auto_observe(self, schedule: list[str]) -> None:
+        if self._current_zone != 'kitchen':
+            return
         now = self.get_clock().now().nanoseconds * 1e-9
         if now - self._last_obs_time < self._obs_interval or not schedule:
             return
@@ -185,6 +187,7 @@ class DrinkServingNode(Node):
         zone = get_room_for_pose(x, y)
         if zone is None:
             self._zone_hold_count = 0
+            self._current_zone = None  # robot left all known zones (transit)
             return
         if zone == self._zone_candidate:
             self._zone_hold_count += 1

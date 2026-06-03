@@ -38,7 +38,7 @@ def generate_launch_description() -> LaunchDescription:
     args = [
         DeclareLaunchArgument('budget',               default_value='2'),
         DeclareLaunchArgument('observation_interval', default_value='15.0'),
-        DeclareLaunchArgument('dwell_time',           default_value='30.0'),
+        DeclareLaunchArgument('dwell_time',           default_value='5.0'),
         DeclareLaunchArgument('start_delay',          default_value='38.0'),
         DeclareLaunchArgument('alpha',                default_value='0.5'),
         DeclareLaunchArgument('strategy',             default_value='awareness_manager'),
