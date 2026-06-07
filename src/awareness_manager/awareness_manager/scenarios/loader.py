@@ -15,7 +15,7 @@ _AM_NS = 'http://coresense.eu/awareness/'
 _CONCEPTS_QUERY = """
 PREFIX am: <http://coresense.eu/awareness/>
 SELECT ?conceptId ?conceptType ?decayRate ?classEMode ?derivedAggregation ?absentFallbackE
-       ?observationCost WHERE {
+       ?observationCost ?observable WHERE {
     ?c a am:Concept ;
        am:conceptId ?conceptId ;
        am:conceptType ?conceptType ;
@@ -24,6 +24,7 @@ SELECT ?conceptId ?conceptType ?decayRate ?classEMode ?derivedAggregation ?absen
     OPTIONAL { ?c am:derivedAggregation ?derivedAggregation . }
     OPTIONAL { ?c am:absentFallbackE ?absentFallbackE . }
     OPTIONAL { ?c am:observationCost ?observationCost . }
+    OPTIONAL { ?c am:observable ?observable . }
 }
 """
 
@@ -50,6 +51,18 @@ SELECT ?conceptId ?conceptType ?decayRate ?classId ?observationCost ?zone ?urgen
     OPTIONAL { ?i am:observationCost ?observationCost . }
     OPTIONAL { ?i am:zone ?zone . }
     OPTIONAL { ?i am:urgencyRate ?urgencyRate . }
+}
+"""
+
+_CAUSAL_EDGES_QUERY = """
+PREFIX am: <http://coresense.eu/awareness/>
+SELECT ?sourceId ?targetId ?propagationWeight WHERE {
+    ?e a am:CausalEdge ;
+       am:source ?src ;
+       am:target ?tgt ;
+       am:propagationWeight ?propagationWeight .
+    ?src am:conceptId ?sourceId .
+    ?tgt am:conceptId ?targetId .
 }
 """
 
@@ -99,6 +112,10 @@ def load_kb_from_ttl(ttl_path: Path) -> KnowledgeBase:
         derived_agg = sol['derivedAggregation'].value if sol['derivedAggregation'] is not None else 'mean'
         fallback_e = float(sol['absentFallbackE'].value) if sol['absentFallbackE'] is not None else 1.0
         obs_cost = float(sol['observationCost'].value) if sol['observationCost'] is not None else 1.0
+        observable = (
+            sol['observable'].value.lower() != 'false'
+            if sol['observable'] is not None else True
+        )
         kb.add_concept(Concept(
             concept_id=sol['conceptId'].value,
             concept_type=sol['conceptType'].value,
@@ -107,6 +124,7 @@ def load_kb_from_ttl(ttl_path: Path) -> KnowledgeBase:
             derived_aggregation=derived_agg,
             absent_fallback_e=fallback_e,
             observation_cost=obs_cost,
+            observable=observable,
         ))
 
     for sol in store.query(_EDGES_QUERY):
@@ -114,6 +132,13 @@ def load_kb_from_ttl(ttl_path: Path) -> KnowledgeBase:
             id_a=sol['sourceId'].value,
             id_b=sol['targetId'].value,
             weight=float(sol['weight'].value),
+        )
+
+    for sol in store.query(_CAUSAL_EDGES_QUERY):
+        kb.add_causal_relation(
+            source_id=sol['sourceId'].value,
+            target_id=sol['targetId'].value,
+            propagation_weight=float(sol['propagationWeight'].value),
         )
 
     return kb

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 
 class KnowledgeBase:
+
     """
     Semantic graph knowledge base for top-down robot awareness management.
 
@@ -39,6 +40,7 @@ class KnowledgeBase:
 
     def __init__(self) -> None:
         self._graph: nx.Graph = nx.Graph()
+        self._causal_graph: nx.DiGraph = nx.DiGraph()
         self._concepts: dict[str, Concept] = {}
 
     # ------------------------------------------------------------------
@@ -67,6 +69,65 @@ class KnowledgeBase:
         if id_b not in self._concepts:
             raise ValueError(f"Concept '{id_b}' not in knowledge base.")
         self._graph.add_edge(id_a, id_b, weight=weight)
+
+    def neighbors(self, concept_id: str) -> list[str]:
+        """Direct semantic graph neighbors of a concept (1-hop, any edge weight)."""
+        if concept_id not in self._graph:
+            raise ValueError(f"Concept '{concept_id}' not in knowledge graph.")
+        return list(self._graph.neighbors(concept_id))
+
+    # ------------------------------------------------------------------
+    # Causal graph — stateProject (D1.4 §3.3.3)
+    # ------------------------------------------------------------------
+
+    def add_causal_relation(self, source_id: str, target_id: str, propagation_weight: float) -> None:
+        """
+        Add a directed causal edge: observing source gives partial epistemic
+        information about target.
+
+        propagation_weight ∈ (0, 1]: fraction of the source observation's refresh
+        amount that propagates to the target's epistemic error.  A value of 0.5
+        means observing source delivers half the epistemic benefit of a direct
+        observation of target.
+
+        Causal edges are separate from semantic edges and do not affect spreading
+        activation (A). They only affect E propagation on observation.
+
+        Raises:
+            ValueError: if either concept is not in the knowledge base.
+        """
+        if source_id not in self._concepts:
+            raise ValueError(f"Concept '{source_id}' not in knowledge base.")
+        if target_id not in self._concepts:
+            raise ValueError(f"Concept '{target_id}' not in knowledge base.")
+        self._causal_graph.add_node(source_id)
+        self._causal_graph.add_node(target_id)
+        self._causal_graph.add_edge(source_id, target_id, propagation_weight=propagation_weight)
+
+    def causal_neighbors(self, concept_id: str) -> list[tuple[str, float]]:
+        """
+        Return [(target_id, propagation_weight), ...] for all direct causal
+        successors of concept_id.  Empty list if concept has no outgoing causal edges.
+        """
+        if concept_id not in self._causal_graph:
+            return []
+        return [
+            (tgt, data['propagation_weight'])
+            for tgt, data in self._causal_graph[concept_id].items()
+        ]
+
+    def propagate_causal_refresh(self, concept_id: str, amount: float) -> None:
+        """
+        Apply a causal propagation refresh: reduce E by amount without adding drift.
+
+        Unlike refresh_concept() (which applies Formula 5: E += decay_rate − refresh),
+        this only subtracts — no drift is added — because no direct observation took
+        place.  Clamped to [0, 1].  No-op for derived-mode concepts.
+        """
+        concept = self._concepts.get(concept_id)
+        if concept is None or concept.class_e_mode == 'derived':
+            return
+        concept.epistemic_error = max(0.0, min(1.0, concept.epistemic_error - amount))
 
     # ------------------------------------------------------------------
     # Formula 1 - Spreading Activation

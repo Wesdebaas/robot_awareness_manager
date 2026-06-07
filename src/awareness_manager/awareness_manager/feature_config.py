@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 
 _WEIGHT_MAP: dict[str, str] = {
-    'w_ea':   'w_ea_product',
-    'w_surp': 'w_surprise',
-    'w_f2':   'w_f2_anticipatory',
-    'w_urg':  'w_urgency',
-    'w_tc':   'w_travel_cost',
+    'w_ea':     'w_ea_product',
+    'w_surp':   'w_surprise',
+    'w_f2':     'w_f2_anticipatory',
+    'w_urg':    'w_urgency',
+    'w_tc':     'w_travel_cost',
+    'w_causal': 'w_causal',
 }
 
 _FLAG_MAP: dict[str, str] = {
@@ -84,13 +85,16 @@ class PriorityWeights:
              + w_surprise       × prediction_error(c)     [Telogenesis S̃_i term]
              + w_f2_anticipatory × A_anticipatory(c)      [standalone F2 boost]
              + w_urgency         × urgency(c)             [unmet-need accumulator]
+             + w_causal          × Σ_{Y: c→Y} prop(c,Y) × E(Y) × A(Y)   [R4 causal benefit]
 
     Selection ordering applies the spatial opportunity cost (F6) as:
 
         sort_key(c) = P(c) / travel_cost(c)^w_travel_cost
 
-    Setting a weight to 0.0 disables that component. w_surprise defaults to 0.0
-    (backward compatible); set to 1.0 to activate the Telogenesis surprise term.
+    Setting a weight to 0.0 disables that component. w_surprise and w_causal both
+    default to 0.0 (backward compatible). Set w_causal > 0 to activate the causal
+    benefit term so the scheduler prioritises observations that deliver indirect
+    epistemic benefit to non-observable causally-implied concepts.
     Setting w_travel_cost to 0.0 disables the F6 spatial penalty.
     The w_travel_cost exponent must be ≥ 0.
 
@@ -105,6 +109,7 @@ class PriorityWeights:
     w_f2_anticipatory: float = 1.0  # A_anticipatory(c) from queued goals
     w_urgency:         float = 1.0  # instance-level urgency accumulator
     w_travel_cost:     float = 1.0  # F6 divisor exponent (0 = no spatial penalty)
+    w_causal:          float = 0.0  # R4 causal benefit: Σ propagation_weight×E(Y)×A(Y) over causal successors Y
 
     @classmethod
     def all_default(cls) -> 'PriorityWeights':
@@ -126,11 +131,11 @@ class PriorityWeights:
         kwargs: dict[str, float] = {}
         for k, v in d.items():
             attr = _WEIGHT_MAP.get(k.lower(), k)
-            if attr not in ('w_ea_product', 'w_surprise', 'w_f2_anticipatory', 'w_urgency', 'w_travel_cost'):
+            if attr not in ('w_ea_product', 'w_surprise', 'w_f2_anticipatory', 'w_urgency', 'w_travel_cost', 'w_causal'):
                 raise ValueError(
                     f"Unknown weight key '{k}'. "
                     f"Valid short keys: {list(_WEIGHT_MAP)}; "
-                    "full keys: w_ea_product, w_surprise, w_f2_anticipatory, w_urgency, w_travel_cost."
+                    "full keys: w_ea_product, w_surprise, w_f2_anticipatory, w_urgency, w_travel_cost, w_causal."
                 )
             kwargs[attr] = float(v)
         return cls(**kwargs)

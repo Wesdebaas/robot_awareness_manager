@@ -51,7 +51,8 @@ am:drone_camera a am:Concept ;
 am:image_quality a am:Concept ;
     am:conceptId "image_quality" ;
     am:conceptType "state" ;
-    am:decayRate "0.08"^^xsd:double .
+    am:decayRate "0.08"^^xsd:double ;
+    am:observable "false"^^xsd:boolean .
 
 am:light_conditions a am:Concept ;
     am:conceptId "light_conditions" ;
@@ -171,6 +172,30 @@ am:panel_row a am:Concept ;
    am:source am:light_conditions ;
    am:target am:wind_speed ;
    am:weight "2.0"^^xsd:double .
+
+
+# --- Causal edges (stateProject — D1.4 §3.3.3) ---
+#
+# Directed: observing the source gives partial epistemic information about the target.
+# propagationWeight: fraction of the source observation's refresh that propagates.
+#
+# drone_camera → image_quality (w=0.5):
+#   Knowing the camera's calibration state tells you roughly what image quality
+#   to expect, even before a panel is imaged.
+#
+# light_conditions → image_quality (w=0.6):
+#   Lighting is the dominant factor in image quality; observing it gives
+#   substantial partial knowledge of what quality the camera will achieve.
+
+[] a am:CausalEdge ;
+   am:source am:drone_camera ;
+   am:target am:image_quality ;
+   am:propagationWeight "0.5"^^xsd:double .
+
+[] a am:CausalEdge ;
+   am:source am:light_conditions ;
+   am:target am:image_quality ;
+   am:propagationWeight "0.6"^^xsd:double .
 
 
 # --- Instance-level concepts ---

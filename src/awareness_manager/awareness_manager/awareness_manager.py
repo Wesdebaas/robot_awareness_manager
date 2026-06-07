@@ -63,6 +63,7 @@ class AwarenessManager:
     Priority formula (see PriorityWeights for weights):
         P(c)     = w_ea × (E(c) × A_mission(c)) + w_surprise × prediction_error(c)
                  + w_f2 × A_anticipatory(c) + w_urgency × urgency(c)
+                 + w_causal × Σ_{Y: c→Y} prop(c,Y) × E(Y) × A(Y)
         sort_key = P(c) / travel_cost(c)^w_tc
 
     Task nodes have decay_rate=0 so E stays 0 and are never scheduled.
@@ -200,6 +201,8 @@ class AwarenessManager:
         # Replace (not add to) the computed attention for one recompute cycle.
         self._attention_overrides: dict[str, float] = {}
 
+        self._last_schedule: list[str] = []
+
         self._recompute_attention()
 
     # ------------------------------------------------------------------
@@ -323,7 +326,8 @@ class AwarenessManager:
             self._kb.update_derived_class_errors(self._instance_kb)
         self._advance_mission_queue(dt)
         self._recompute_attention()
-        return self._top_n()
+        self._last_schedule = self._top_n()
+        return self._last_schedule
 
     # ------------------------------------------------------------------
     # Observation (Formula 3)
@@ -361,6 +365,7 @@ class AwarenessManager:
             if self._fc.use_learnable_decay:
                 self._kb.update_decay_rate(concept_id, surprise=concept.prediction_error,
                                            tau=self._tau_decay)
+            self._propagate_causal(concept_id, refresh)
             return refresh
 
         if self._instance_kb is not None and concept_id in self._instance_kb.instance_ids():
@@ -508,6 +513,73 @@ class AwarenessManager:
         )
 
     # ------------------------------------------------------------------
+    # Causal propagation — stateProject (D1.4 §3.3.3)
+    # ------------------------------------------------------------------
+
+    def _propagate_causal(self, observed_id: str, refresh_amount: float) -> None:
+        """
+        After observing concept X, propagate partial epistemic benefit to causal
+        successors Y with weight w: E(Y) -= w * refresh_amount.
+
+        This implements the stateProject dimension of D1.4's projection step:
+        "the mental model can be completed by means of extrapolation of the
+        currently perceived partial state."  It is purely epistemic — no decision
+        logic, no axic evaluation.  Only class-level concepts are propagated;
+        the instance KB has its own mechanisms.
+        """
+        for target_id, weight in self._kb.causal_neighbors(observed_id):
+            self._kb.propagate_causal_refresh(target_id, weight * refresh_amount)
+
+    # ------------------------------------------------------------------
+    # Epistemic self-monitoring
+    # ------------------------------------------------------------------
+
+    def evaluate(self, staleness_threshold: float = 0.7) -> dict:
+        """
+        Epistemic self-monitoring: how fresh is the AM's knowledge of its
+        current mission goal?
+
+        This is NOT a decision maker and does NOT evaluate whether the mission
+        is succeeding — that is the job of the action pipeline and its value
+        layer, which are outside the scope of an awareness manager.
+
+        What this does: measures the AM's own epistemic state over the goal's
+        direct 1-hop semantic neighborhood (concepts with decay_rate > 0).
+        This corresponds to D1.4 §3.2.5 epistemic awareness ("understanding
+        of the knowledge K it has about some situation and its capability of
+        leveraging it") and the metaProject branch of Figure 3.9 — the AM
+        monitoring the quality of its own awareness output.
+
+        Args:
+            staleness_threshold: E above this is considered critically stale (default 0.7).
+
+        Returns:
+            mission_coverage:   float     Mean(1-E) over relevant concepts [0,1]; 1.0 = fully fresh
+            critical_concepts:  list[str] Concept IDs where E > staleness_threshold
+            budget_utilisation: float     Slots used in last tick's schedule / budget
+            relevant_ids:       list[str] The concept IDs assessed
+        """
+        relevant_ids = [
+            cid for cid in self._kb.neighbors(self._goal_id)
+            if self._kb.get_concept(cid).decay_rate > 0
+            and self._kb.get_concept(cid).observable
+        ]
+        if relevant_ids:
+            e_values = [self._kb.get_concept(cid).epistemic_error for cid in relevant_ids]
+            mission_coverage = 1.0 - sum(e_values) / len(e_values)
+            critical = [cid for cid, e in zip(relevant_ids, e_values) if e > staleness_threshold]
+        else:
+            mission_coverage = 1.0
+            critical = []
+
+        return {
+            'mission_coverage':   round(mission_coverage, 4),
+            'critical_concepts':  critical,
+            'budget_utilisation': round(len(self._last_schedule) / max(1, self._budget), 4),
+            'relevant_ids':       relevant_ids,
+        }
+
+    # ------------------------------------------------------------------
     # Read-only snapshots
     # ------------------------------------------------------------------
 
@@ -521,6 +593,7 @@ class AwarenessManager:
                  + w_surp × prediction_error(c)       [Telogenesis S̃_i — persistent]
                  + w_f2   × A_anticipatory(c)
                  + w_urg  × urgency(c)
+                 + w_causal × Σ_{Y: c→Y} prop(c,Y) × E(Y) × A(Y)   [R4 causal benefit]
 
         Where:
           A_mission(c)        — spreading-activation attention from the current goal (F1).
@@ -528,10 +601,13 @@ class AwarenessManager:
           E(c)                — epistemic error (staleness) of concept c (F5).
           prediction_error(c) — persistent normalized prediction error (set by violations).
           urgency(c)          — instance-level unmet-need accumulator.
+          causal benefit(c)   — Σ over non-observable causal successors Y of c:
+                                propagation_weight(c,Y) × E(Y) × A(Y).  Captures the
+                                indirect epistemic benefit of observing c when Y is stale.
 
         Weights are read from self._pw (PriorityWeights). Setting any weight to
-        0.0 removes that component entirely. w_surprise defaults to 0.0 (backward
-        compatible); set to 1.0 to activate the Telogenesis surprise term.
+        0.0 removes that component entirely. w_surprise and w_causal default to 0.0
+        (backward compatible); set w_causal > 0 to activate the R4 causal benefit term.
 
         Surprise boosts (one-tick violation signals) are added to the mission
         channel before the E×A gate, preserving their existing scheduling effect.
@@ -556,6 +632,7 @@ class AwarenessManager:
             a_surprise: float = 0.0,
             prediction_error: float = 0.0,
             urgency: float = 0.0,
+            causal_benefit: float = 0.0,
         ) -> float:
             a_ea = min(1.0, a_mission + a_surprise)
             if use_f5:
@@ -563,9 +640,16 @@ class AwarenessManager:
             else:
                 p_ea = pw.w_ea_product * a_ea
             p_surprise = pw.w_surprise * prediction_error
-            p_f2  = pw.w_f2_anticipatory * a_anticipatory
-            p_urg = pw.w_urgency * urgency
-            return p_ea + p_surprise + p_f2 + p_urg
+            p_f2    = pw.w_f2_anticipatory * a_anticipatory
+            p_urg   = pw.w_urgency * urgency
+            p_causal = pw.w_causal * causal_benefit
+            return p_ea + p_surprise + p_f2 + p_urg + p_causal
+
+        def _causal_benefit(cid: str) -> float:
+            return sum(
+                w * self._kb.get_concept(tid).epistemic_error * self._attention.get(tid, 0.0)
+                for tid, w in self._kb.causal_neighbors(cid)
+            )
 
         result = {
             cid: _score(
@@ -574,6 +658,7 @@ class AwarenessManager:
                 self._channel_anticipatory.get(cid, 0.0),
                 self._channel_surprise.get(cid, 0.0),
                 self._kb.get_concept(cid).prediction_error,
+                causal_benefit=_causal_benefit(cid),
             )
             for cid in self._kb.concept_ids()
         }
@@ -724,11 +809,12 @@ class AwarenessManager:
                 "ld": self._fc.use_learnable_decay,
             },
             "priority_weights": {
-                "w_ea":  self._pw.w_ea_product,
-                "w_surp": self._pw.w_surprise,
-                "w_f2":  self._pw.w_f2_anticipatory,
-                "w_urg": self._pw.w_urgency,
-                "w_tc":  self._pw.w_travel_cost,
+                "w_ea":     self._pw.w_ea_product,
+                "w_surp":   self._pw.w_surprise,
+                "w_f2":     self._pw.w_f2_anticipatory,
+                "w_urg":    self._pw.w_urgency,
+                "w_tc":     self._pw.w_travel_cost,
+                "w_causal": self._pw.w_causal,
             },
         }
 
@@ -917,7 +1003,8 @@ class AwarenessManager:
             k: v for k, v in positive.items()
             if k not in self._kb.concept_ids()  # instance IDs always pass through
             or (self._kb.get_concept(k).class_e_mode != 'derived'
-                and self._kb.get_concept(k).decay_rate > 0.0)  # exclude task nodes
+                and self._kb.get_concept(k).decay_rate > 0.0  # exclude task nodes
+                and self._kb.get_concept(k).observable)        # exclude inferred-only concepts
         }
         # F6 - Spatial Opportunity Cost: sort by P(c) / travel_cost(c)^w_travel_cost.
         # w_travel_cost=1 gives full F6 opportunity-cost ordering; 0 disables the

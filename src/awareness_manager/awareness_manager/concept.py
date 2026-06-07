@@ -62,6 +62,12 @@ class Concept:
     derived_aggregation: str = 'mean'     # 'mean' | 'max' | 'min'  (derived mode only)
     absent_fallback_e: float = 1.0        # E when zero active instances remain (derived only)
 
+    # Whether the robot has a sensor that can directly observe this concept.
+    # Non-observable concepts (e.g. image_quality, inferred from camera + lighting)
+    # decay normally but are excluded from the observation schedule.  Their E is
+    # updated only via causal propagation (add_causal_relation) from observable sources.
+    observable: bool = True
+
 
 @dataclass
 class InstanceConcept(Concept):

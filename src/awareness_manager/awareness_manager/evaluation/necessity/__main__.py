@@ -7,6 +7,7 @@ removing it causes the system to fail as an awareness manager.
     python -m awareness_manager.evaluation.necessity n1     # E necessity
     python -m awareness_manager.evaluation.necessity n2     # A necessity
     python -m awareness_manager.evaluation.necessity n3     # P=ExA combination necessity
+    python -m awareness_manager.evaluation.necessity n4     # causal benefit term necessity
     python -m awareness_manager.evaluation.necessity all    # all experiments
 """
 
@@ -67,6 +68,24 @@ def _cmd_n3(args: argparse.Namespace) -> None:
     print_n3(results)
 
 
+def _cmd_n4(args: argparse.Namespace) -> None:
+    from awareness_manager.evaluation.necessity.experiments import (
+        experiment_causal_benefit_necessity,
+        print_n4,
+    )
+    seeds = list(range(42, 42 + args.seeds))
+    results = experiment_causal_benefit_necessity(
+        K_obs=args.K_obs,
+        budget=args.budget,
+        ticks=args.ticks,
+        seeds=seeds,
+        spike_period=args.spike_period,
+        obs_interval=args.obs_interval,
+        w_causal=args.w_causal,
+    )
+    print_n4(results)
+
+
 def _cmd_all(args: argparse.Namespace) -> None:
     from awareness_manager.evaluation.necessity.experiments import run_all
     run_all(verbose=True)
@@ -112,8 +131,19 @@ def main() -> None:
     p3.add_argument("--obs-interval", type=float, default=10.0, help="Observation interval s (default 10)")
     p3.set_defaults(func=_cmd_n3)
 
+    # ── n4 — causal benefit necessity ─────────────────────────────────────
+    p4 = sub.add_parser("n4", help="N4: causal benefit term (w_causal) is necessary")
+    p4.add_argument("--K-obs",        type=int,   default=4,    help="Observable concepts (default 4)")
+    p4.add_argument("--budget",       type=int,   default=1,    help="Observation budget (default 1)")
+    p4.add_argument("--ticks",        type=int,   default=500,  help="Simulation ticks (default 500)")
+    p4.add_argument("--seeds",        type=int,   default=5,    help="Number of seeds (default 5)")
+    p4.add_argument("--spike-period", type=int,   default=50,   help="Mean ticks between spikes (default 50)")
+    p4.add_argument("--obs-interval", type=float, default=10.0, help="Observation interval s (default 10)")
+    p4.add_argument("--w-causal",     type=float, default=1.0,  help="Causal weight in causal_on condition (default 1.0)")
+    p4.set_defaults(func=_cmd_n4)
+
     # ── all ───────────────────────────────────────────────────────────────
-    p_all = sub.add_parser("all", help="Run all necessity experiments")
+    p_all = sub.add_parser("all", help="Run all necessity experiments (N1–N4)")
     p_all.set_defaults(func=_cmd_all)
 
     args = parser.parse_args()

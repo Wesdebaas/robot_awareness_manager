@@ -23,9 +23,18 @@ fails to function as an awareness manager without it.
         low-relevance concept can outcompete a fresh high-relevance one by making
         up for low A with high E, diverting budget from mission-critical concepts.
 
+    N4 — Causal benefit term w_causal [core, R4]
+        Without the causal benefit term, the scheduler treats X_causal (which
+        reduces epistemic error in non-observable implied concept Y via causal
+        propagation) identically to any other observable concept.  When Y is stale,
+        the causal benefit term elevates X_causal's priority so the budget is
+        directed toward observations that deliver the most total epistemic gain,
+        including indirect gain for non-observable concepts.
+
 Usage:
 
     python -m awareness_manager.evaluation.necessity n1
+    python -m awareness_manager.evaluation.necessity n4
     python -m awareness_manager.evaluation.necessity all
 """
 
@@ -898,6 +907,278 @@ def print_n3(results: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# N4 — Causal benefit term is necessary
+# ---------------------------------------------------------------------------
+
+def experiment_causal_benefit_necessity(
+    K_obs: int = 4,
+    delta_obs: float = 0.1,
+    delta_y: float = 0.2,
+    prop_weight: float = 0.7,
+    w_causal: float = 1.0,
+    budget: int = 1,
+    obs_interval: float = 10.0,
+    spike_period: int = 50,
+    ticks: int = 500,
+    seeds: list[int] | None = None,
+) -> dict[str, Any]:
+    """
+    N4: The causal benefit term (w_causal > 0) is necessary for awareness
+    management when non-observable concepts are causally implied by observable ones.
+
+    Setup
+    -----
+    K_obs=4 observable concepts (x_causal, x2, x3, x4) are each connected to the
+    goal by a weight-1 semantic edge → A = (1−0.5)^1 = 0.50 for all.
+    All share the same decay rate delta_obs.
+
+    One non-observable concept y_implied is also connected to the goal by a
+    weight-1 semantic edge (A = 0.50) but is marked observable=False — it can
+    only be known through causal propagation, never by direct observation.
+    y_implied has decay rate delta_y > delta_obs (drifts faster).
+
+    A directed causal edge x_causal → y_implied (propagation_weight=prop_weight)
+    means that observing x_causal reduces E(y_implied) by prop_weight × refresh.
+
+    y_implied is periodically spiked to E = 1.0 to simulate unexpected state change.
+
+    Non-degeneracy check
+    --------------------
+    Causal_off — x_causal selected ~1/K_obs of ticks.
+        Net drift per x_causal observation cycle (K_obs ticks):
+            E_y drift      = delta_y × K_obs = 0.2 × 4 = 0.8
+            causal refresh = prop_weight × (1 − exp(−delta_obs × obs_interval)) ÷ 1
+                           = 0.7 × 0.632 = 0.442   (only on the 1 tick x_causal is chosen)
+        Net = 0.8 − 0.442 = +0.358 > 0  →  degenerate; E_y drifts toward 1.0 between spikes.
+
+    Causal_on — when y_implied is spiked (E=1.0), x_causal's priority is boosted:
+        P(x_causal) = E(x_causal)×A + w_causal×prop_weight×1.0×0.5
+                    = E(x_causal)×0.5 + 0.35
+        P(xi)       = E(xi)×0.5   (no causal benefit)
+        x_causal wins unless E(xi)−E(x_causal) > 0.7 — effectively always.
+        Causal refresh fires every tick → net per tick = prop_weight×refresh − delta_y
+                                        = 0.442 − 0.2 = +0.242 > 0  →  E_y recovers.
+
+    Conditions
+    ----------
+    Causal_on  (w_causal > 0):
+        When y_implied is stale the scheduler raises x_causal's priority.
+        x_causal is observed almost every tick until E_y drops.
+        Causal propagation keeps E_y low throughout the run.
+
+    Causal_off (w_causal = 0):
+        All four observable concepts compete with equal base priority.
+        x_causal is scheduled only ≈1/4 of ticks regardless of E_y.
+        y_implied accumulates high epistemic error between spikes; recovery is slow.
+
+    Failure criterion
+    -----------------
+    Without the causal benefit term, the scheduler is unaware that observing
+    x_causal delivers indirect epistemic benefit to y_implied.  It treats x_causal
+    identically to causally-inert concepts x2/x3/x4, underinvesting in x_causal
+    and leaving y_implied chronically stale.
+
+    Returns
+    -------
+    dict with keys:
+        "K_obs", "delta_obs", "delta_y", "prop_weight", "w_causal"
+        "budget", "obs_interval", "spike_period", "ticks", "seeds"
+        "conditions": ["causal_on", "causal_off"]
+        "mean_e_y":        {condition → agg}   (lower is better)
+        "sched_frac_xcausal": {condition → agg}  (higher = x_causal prioritised)
+        "rows":    list[dict] — one row per (condition, seed)
+        "summary": {condition → {...}}
+    """
+    from awareness_manager.awareness_manager import AwarenessManager
+    from awareness_manager.concept import Concept
+    from awareness_manager.feature_config import PriorityWeights
+    from awareness_manager.knowledge_base import KnowledgeBase
+
+    if seeds is None:
+        seeds = [42, 43, 44, 45, 46]
+
+    def _build_kb() -> tuple[KnowledgeBase, str, list[str]]:
+        kb = KnowledgeBase()
+        kb.add_concept(Concept(concept_id="goal", concept_type="task", decay_rate=0.0))
+
+        # x_causal: has causal edge → y_implied
+        kb.add_concept(Concept(concept_id="x_causal", concept_type="object",
+                                decay_rate=delta_obs, epistemic_error=0.0))
+        kb.add_relation("goal", "x_causal", weight=1.0)
+
+        # x2..x{K_obs}: causally inert observables
+        other_obs = [f"x{i}" for i in range(2, K_obs + 1)]
+        for cid in other_obs:
+            kb.add_concept(Concept(concept_id=cid, concept_type="object",
+                                    decay_rate=delta_obs, epistemic_error=0.0))
+            kb.add_relation("goal", cid, weight=1.0)
+
+        # y_implied: non-observable, decays fast, connected to goal semantically
+        kb.add_concept(Concept(concept_id="y_implied", concept_type="state",
+                                decay_rate=delta_y, epistemic_error=0.0,
+                                observable=False))
+        kb.add_relation("goal", "y_implied", weight=1.0)
+
+        # Causal edge: observing x_causal reduces E(y_implied)
+        kb.add_causal_relation("x_causal", "y_implied", propagation_weight=prop_weight)
+
+        return kb, "x_causal", other_obs
+
+    def _run_condition(condition: str, seed: int) -> dict:
+        kb, xcausal_id, other_obs_ids = _build_kb()
+
+        pw = PriorityWeights(w_causal=(w_causal if condition == "causal_on" else 0.0))
+        am = AwarenessManager(
+            kb=kb,
+            goal_id="goal",
+            budget=budget,
+            observation_interval=obs_interval,
+            alpha=0.5,
+            priority_weights=pw,
+        )
+
+        # Spike schedule for y_implied — periodic with ±30 % jitter
+        spike_rng = random.Random(seed ^ 0xF00D)
+        spikes_by_tick: dict[int, bool] = {}
+        t = spike_rng.randint(max(1, spike_period // 2), spike_period)
+        while t < ticks:
+            spikes_by_tick[t] = True
+            t += spike_rng.randint(
+                max(1, int(0.7 * spike_period)),
+                int(1.3 * spike_period),
+            )
+
+        e_y_sum = 0.0
+        sched_xcausal = 0
+        tick_count = 0
+
+        for tick_i in range(ticks):
+            if spikes_by_tick.get(tick_i):
+                kb.get_concept("y_implied").epistemic_error = 1.0
+
+            schedule = am.tick(1.0)
+            if schedule:
+                am.observe(schedule[0])
+                if schedule[0] == xcausal_id:
+                    sched_xcausal += 1
+
+            e_y_sum += kb.get_concept("y_implied").epistemic_error
+            tick_count += 1
+
+        return {
+            "condition":          condition,
+            "seed":               seed,
+            "mean_e_y":           e_y_sum / tick_count,
+            "sched_frac_xcausal": sched_xcausal / ticks,
+        }
+
+    rows: list[dict] = []
+    for condition in ["causal_on", "causal_off"]:
+        for seed in seeds:
+            rows.append(_run_condition(condition, seed))
+
+    def _agg(condition: str, key: str) -> dict:
+        vals = [r[key] for r in rows if r["condition"] == condition]
+        mean = statistics.mean(vals)
+        std  = statistics.stdev(vals) if len(vals) > 1 else 0.0
+        return {"mean": round(mean, 4), "std": round(std, 4)}
+
+    summary: dict[str, dict] = {}
+    for cond in ["causal_on", "causal_off"]:
+        summary[cond] = {
+            "mean_e_y":           _agg(cond, "mean_e_y"),
+            "sched_frac_xcausal": _agg(cond, "sched_frac_xcausal"),
+        }
+
+    return {
+        "K_obs": K_obs, "delta_obs": delta_obs, "delta_y": delta_y,
+        "prop_weight": prop_weight, "w_causal": w_causal,
+        "budget": budget, "obs_interval": obs_interval,
+        "spike_period": spike_period, "ticks": ticks, "seeds": seeds,
+        "conditions": ["causal_on", "causal_off"],
+        "rows":    rows,
+        "summary": summary,
+    }
+
+
+def print_n4(results: dict) -> None:
+    K     = results["K_obs"]
+    do    = results["delta_obs"]
+    dy    = results["delta_y"]
+    pw    = results["prop_weight"]
+    wc    = results["w_causal"]
+    bud   = results["budget"]
+    obs   = results["obs_interval"]
+    sp    = results["spike_period"]
+    t     = results["ticks"]
+    ns    = len(results["seeds"])
+
+    refresh_obs = 1.0 - math.exp(-do * obs)
+    causal_refresh_per_tick = pw * refresh_obs
+
+    # Non-degeneracy arithmetic
+    net_causal_off = dy * K - pw * refresh_obs   # drift over K ticks minus 1 causal refresh
+    net_causal_on  = dy - pw * refresh_obs        # per-tick: drift minus causal refresh
+
+    print("\n=== N4: Causal Benefit — R4 Causal Term is a Core Component ===\n")
+    print(f"  Setup : {K} observable concepts (x_causal, x2, ..., x{K}), all weight-1 edges → A=0.50")
+    print(f"          1 non-observable y_implied: weight-1 edge → A=0.50 (semantically known,")
+    print(f"          not directly observable); marked observable=False.")
+    print(f"          Causal edge: x_causal → y_implied (propagation_weight={pw})")
+    print(f"          δ_obs={do}, δ_y={dy}, budget={bud}, obs_interval={obs}s")
+    print(f"          spike_period≈{sp} ticks, {t} ticks, {ns} seeds")
+    print()
+    print(f"  Non-degeneracy:")
+    print(f"    Causal_off: x_causal chosen ≈1/{K} ticks → net E_y per cycle = {net_causal_off:+.3f} (> 0 → degenerate)")
+    print(f"    Causal_on:  x_causal prioritised when E_y=1.0 → net E_y per tick = {net_causal_on:+.3f} (< 0 → recovers ✓)")
+    print()
+    print(f"  Claim : Without w_causal, x_causal and x2/x3/x4 have identical base priority.")
+    print(f"          The scheduler is unaware that observing x_causal delivers indirect")
+    print(f"          epistemic benefit (Δ{pw:.1f}×refresh) to non-observable y_implied.")
+    print(f"          With w_causal={wc:.1f}, P(x_causal) += {wc}×{pw}×E(y_implied)×0.5,")
+    print(f"          boosting x_causal whenever y_implied is stale and focusing budget")
+    print(f"          on the observation that maximises total epistemic gain.")
+    print()
+
+    s = results["summary"]
+
+    header = (f"  {'Condition':<22} {'E(y_implied) ↓':>16} {'Sched frac x_causal ↑':>23}")
+    print(header)
+    print("  " + "-" * 65)
+    for cond, label in [("causal_on", f"Causal-on  (w={wc:.1f})"), ("causal_off", "Causal-off (w=0.0)")]:
+        ey  = s[cond]["mean_e_y"]
+        sf  = s[cond]["sched_frac_xcausal"]
+        print(f"  {label:<22} {_fmt_pm(ey):>16} {_fmt_pm(sf):>23}")
+
+    print()
+    ey_on  = s["causal_on"]["mean_e_y"]["mean"]
+    ey_off = s["causal_off"]["mean_e_y"]["mean"]
+    sf_on  = s["causal_on"]["sched_frac_xcausal"]["mean"]
+    sf_off = s["causal_off"]["sched_frac_xcausal"]["mean"]
+
+    if ey_on is not None and ey_off is not None:
+        delta_e = round(ey_off - ey_on, 4)
+        print(f"  ΔE_y (Causal-off − Causal-on) = {delta_e:+.4f}  (positive → causal term keeps implied concept fresher)")
+    if sf_on is not None and sf_off is not None:
+        delta_sf = round(sf_on - sf_off, 4)
+        print(f"  Δsched_frac_xcausal (on − off) = {delta_sf:+.4f}  (positive → causal term redirects budget to x_causal)")
+
+    print()
+    print("  Interpretation:")
+    print(f"  Without the causal benefit term, x_causal and x2/x3/x{K} are indistinguishable")
+    print(f"  to the scheduler. x_causal is chosen ≈1/{K} of ticks, too infrequently to")
+    print(f"  combat y_implied's fast drift (δ={dy}). y_implied accumulates high E between")
+    print(f"  spikes — the scheduler is unaware there is indirect epistemic work to be done.")
+    print(f"  With w_causal={wc:.1f}, a stale y_implied (E=1.0) adds {wc}×{pw}×1.0×0.5={wc*pw*0.5:.3f}")
+    print(f"  to P(x_causal), making it dominant until E_y recovers. The causal term closes")
+    print(f"  the feedback loop: the scheduler now accounts for the full epistemic consequence")
+    print(f"  of each observable action, including its indirect benefit to implied concepts.")
+    print(f"  Conclusion: without the causal benefit term, the priority function P = E×A")
+    print(f"  is incomplete — it ignores the indirect epistemic value of causal observations,")
+    print(f"  leaving non-observable implied concepts chronically stale.")
+
+
+# ---------------------------------------------------------------------------
 
 def run_all(verbose: bool = True) -> dict[str, Any]:
     """Run all necessity experiments."""
@@ -917,5 +1198,10 @@ def run_all(verbose: bool = True) -> dict[str, Any]:
     results["n3"] = experiment_combination_necessity()
     if verbose:
         print_n3(results["n3"])
+
+    print("\nRunning N4 — causal benefit term necessity...")
+    results["n4"] = experiment_causal_benefit_necessity()
+    if verbose:
+        print_n4(results["n4"])
 
     return results

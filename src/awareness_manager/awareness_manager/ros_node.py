@@ -23,6 +23,9 @@ Topics:
     awareness/robot_pos            (sub)  std_msgs/String  — update robot position (concept_id)
     awareness/schedule             (pub)  std_msgs/String  — JSON schedule each tick
     awareness/state                (pub)  std_msgs/String  — JSON {cid:{E,A,P}} each tick (class + instances)
+    awareness/adequacy             (pub)  std_msgs/String  — JSON {mission_coverage, critical_concepts,
+                                                             budget_utilisation, relevant_ids} each tick
+                                                             Epistemic self-monitoring only — not mission success
     awareness/observation_feedback (sub)  std_msgs/String  — JSON {"concept_id": "x"}
     awareness/violations           (pub)  std_msgs/String  — JSON list of violated concept IDs
     awareness/violations_feedback  (sub)  std_msgs/String  — JSON {"concept_id":"x","observed_value":0.7}
@@ -232,6 +235,7 @@ class AwarenessNode(Node):
         self._pub_violations        = self.create_publisher(String, 'awareness/violations',        10)
         self._pub_goal              = self.create_publisher(String, 'awareness/goal',              10)
         self._pub_controller_state  = self.create_publisher(String, 'awareness/controller_state', 10)
+        self._pub_adequacy          = self.create_publisher(String, 'awareness/adequacy',          10)
 
         # ---- Subscribers ----
         self.create_subscription(String, 'awareness/set_goal',              self._on_set_goal,              10)
@@ -329,6 +333,9 @@ class AwarenessNode(Node):
                     'urgency_rate': inst.urgency_rate,
                 }
         self._pub_state.publish(String(data=json.dumps(state)))
+
+        adequacy = self._am.evaluate()
+        self._pub_adequacy.publish(String(data=json.dumps(adequacy)))
 
         # Violations: class concepts + active instance concepts
         violations = [
