@@ -151,6 +151,7 @@ class AwarenessNode(Node):
         self.declare_parameter('w_f2',     1.0)
         self.declare_parameter('w_urg',    1.0)
         self.declare_parameter('w_tc',     1.0)
+        self.declare_parameter('w_causal', 0.0)
         self.declare_parameter('ld',       False)
         self.declare_parameter('tau_decay', 0.05)
 
@@ -181,6 +182,7 @@ class AwarenessNode(Node):
             w_f2_anticipatory =self.get_parameter('w_f2').value,
             w_urgency         =self.get_parameter('w_urg').value,
             w_travel_cost     =self.get_parameter('w_tc').value,
+            w_causal          =self.get_parameter('w_causal').value,
         )
 
         # ---- Knowledge base + awareness manager ----

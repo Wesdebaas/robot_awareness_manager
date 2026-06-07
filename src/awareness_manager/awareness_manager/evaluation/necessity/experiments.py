@@ -289,6 +289,11 @@ def print_n1(results: dict) -> None:
     obs     = results["obs_interval"]
 
     print("\n=== N1: E Necessity — Epistemic State is a Core Component ===\n")
+    print(f"  Note  : Near-deterministic regime (std ≈ 0) — results are capability")
+    print(f"          demonstrations, not statistical estimates. p-values trivially")
+    print(f"          reject H₀ because outcomes are deterministic, not because")
+    print(f"          the effect is statistically sampled.")
+    print()
     print(f"  Setup : N={N} concepts, all 1-hop from goal → uniform A=0.50")
     print(f"          K={K} volatile (δ={dv}), {N-K} static (δ={ds})")
     print(f"          Budget={budget}, obs_interval={obs}s, {ticks} ticks, {n_seeds} seeds")
@@ -552,6 +557,9 @@ def print_n2(results: dict) -> None:
     sp   = results["spike_period"]
 
     print("\n=== N2: A Necessity — Goal-Conditioned Relevance is a Core Component ===\n")
+    print(f"  Note  : Near-deterministic regime (std ≈ 0) — results are capability")
+    print(f"          demonstrations, not statistical estimates.")
+    print()
     print(f"  Setup : R={R} relevant concepts (1-hop from goal → A=0.50)")
     print(f"          K={K} irrelevant volatile (no edge to goal → A=0.00)")
     print(f"          All concepts: δ={d}, Budget={bud}, obs_interval={obs}s")
@@ -698,6 +706,7 @@ def experiment_combination_necessity(
     """
     from awareness_manager.awareness_manager import AwarenessManager
     from awareness_manager.concept import Concept
+    from awareness_manager.feature_config import PriorityWeights
     from awareness_manager.knowledge_base import KnowledgeBase
 
     if seeds is None:
@@ -729,32 +738,17 @@ def experiment_combination_necessity(
         primary_set   = set(primary_ids)
         secondary_set = set(secondary_ids)
 
-        if condition == "mult":
-            am = AwarenessManager(
-                kb=kb, goal_id="goal", budget=budget,
-                observation_interval=obs_interval, alpha=0.5,
-            )
-            def _tick():       return am.tick(1.0)
-            def _observe(cid): am.observe(cid)
-        else:
-            # Additive: P = E + A. Compute A once (static graph).
-            attention = kb.compute_attention("goal", alpha=0.5, max_distance=4.0)
-            sched_ids = [c for c in kb.concept_ids()
-                         if c != "goal"
-                         and kb.get_concept(c).decay_rate > 0
-                         and attention.get(c, 0.0) > 0.0]
-
-            def _tick():
-                kb.tick(1.0)
-                ranked = sorted(sched_ids,
-                               key=lambda c: kb.get_concept(c).epistemic_error + attention[c],
-                               reverse=True)
-                return ranked[:budget]
-
-            def _observe(cid):
-                dc = kb.get_concept(cid).decay_rate
-                refresh = 1.0 - math.exp(-dc * obs_interval)
-                kb.refresh_concept(cid, refresh)
+        # Both conditions use the same AwarenessManager; only the combination_rule differs.
+        # 'mult': P_ea = w_ea × (E × A)  — multiplicative joint filter (default AM)
+        # 'add':  P_ea = w_ea × (E + A)  — additive, allows high-E to compensate low-A
+        pw = PriorityWeights(
+            combination_rule='multiplicative' if condition == "mult" else 'additive'
+        )
+        am = AwarenessManager(
+            kb=kb, goal_id="goal", budget=budget,
+            observation_interval=obs_interval, alpha=0.5,
+            priority_weights=pw,
+        )
 
         # Spike schedule for secondary volatile
         spike_rng = random.Random(seed ^ 0xCAFE)
@@ -781,9 +775,9 @@ def experiment_combination_necessity(
             for cid in spikes_by_tick.get(tick_i, []):
                 kb.get_concept(cid).epistemic_error = 1.0
 
-            schedule = _tick()
+            schedule = am.tick(1.0)
             if schedule:
-                _observe(schedule[0])
+                am.observe(schedule[0])
                 if schedule[0] in primary_set:
                     sched_prim += 1
                 elif schedule[0] in secondary_set:
@@ -851,6 +845,11 @@ def print_n3(results: dict) -> None:
     thresh_a = a_p - a_s                  # 0.4375 — E_sec advantage needed for secondary to win (additive)
 
     print("\n=== N3: P=E×A Necessity — Multiplicative Combination is a Core Component ===\n")
+    print(f"  Note  : Near-deterministic regime (std ≈ 0) — results are capability")
+    print(f"          demonstrations, not statistical estimates. Both conditions use")
+    print(f"          the same AwarenessManager; only PriorityWeights.combination_rule")
+    print(f"          differs ('multiplicative' vs 'additive'), ensuring a fair ablation.")
+    print()
     print(f"  Setup : R={R} primary relevant concepts  (weight=1.0 edge → A={a_p:.4f})")
     print(f"          K={K} secondary volatile concepts (weight=4.0 edge → A={a_s:.4f})")
     print(f"          All concepts: δ={d}, Budget={bud}, obs_interval={obs}s")
@@ -998,6 +997,8 @@ def experiment_causal_benefit_necessity(
         seeds = [42, 43, 44, 45, 46]
 
     def _build_kb() -> tuple[KnowledgeBase, str, list[str]]:
+        # KB structure is fixed (no seed) — the 5 seeds only vary spike timing.
+        # std across seeds therefore reflects spike-timing variance only, not KB variance.
         kb = KnowledgeBase()
         kb.add_concept(Concept(concept_id="goal", concept_type="task", decay_rate=0.0))
 

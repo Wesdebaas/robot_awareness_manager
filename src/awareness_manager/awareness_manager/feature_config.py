@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 
 _WEIGHT_MAP: dict[str, str] = {
-    'w_ea':     'w_ea_product',
-    'w_surp':   'w_surprise',
-    'w_f2':     'w_f2_anticipatory',
-    'w_urg':    'w_urgency',
-    'w_tc':     'w_travel_cost',
-    'w_causal': 'w_causal',
+    'w_ea':            'w_ea_product',
+    'w_surp':          'w_surprise',
+    'w_f2':            'w_f2_anticipatory',
+    'w_urg':           'w_urgency',
+    'w_tc':            'w_travel_cost',
+    'w_causal':        'w_causal',
+    'combination_rule':'combination_rule',
 }
 
 _FLAG_MAP: dict[str, str] = {
@@ -95,8 +96,15 @@ class PriorityWeights:
     default to 0.0 (backward compatible). Set w_causal > 0 to activate the causal
     benefit term so the scheduler prioritises observations that deliver indirect
     epistemic benefit to non-observable causally-implied concepts.
+    Note: R4 is constitutive in KBs that contain non-observable concepts; in KBs
+    without them the causal term is vacuously zero and w_causal=0.0 is the correct
+    default (backward compatible with all existing scenarios).
     Setting w_travel_cost to 0.0 disables the F6 spatial penalty.
     The w_travel_cost exponent must be ≥ 0.
+
+    combination_rule controls how E and A are combined in the E×A term:
+      'multiplicative' (default): P_ea = w_ea × (E × A)  — joint filter
+      'additive':                 P_ea = w_ea × (E + A)  — allows high-E to compensate low-A
 
     These weights compose with FeatureConfig: FeatureConfig controls whether
     drift accumulates (F5), spreading activation shape (F1), utility saturation
@@ -104,12 +112,13 @@ class PriorityWeights:
     PriorityWeights controls how the resulting signals are combined into a
     scheduling score.
     """
-    w_ea_product:      float = 1.0  # E(c) × A_mission(c)
+    w_ea_product:      float = 1.0  # E(c) × A_mission(c) (or E+A when combination_rule='additive')
     w_surprise:        float = 0.0  # persistent prediction_error (Telogenesis S̃_i)
     w_f2_anticipatory: float = 1.0  # A_anticipatory(c) from queued goals
     w_urgency:         float = 1.0  # instance-level urgency accumulator
     w_travel_cost:     float = 1.0  # F6 divisor exponent (0 = no spatial penalty)
     w_causal:          float = 0.0  # R4 causal benefit: Σ propagation_weight×E(Y)×A(Y) over causal successors Y
+    combination_rule:  str   = 'multiplicative'  # 'multiplicative' (E×A) or 'additive' (E+A)
 
     @classmethod
     def all_default(cls) -> 'PriorityWeights':
@@ -131,11 +140,15 @@ class PriorityWeights:
         kwargs: dict[str, float] = {}
         for k, v in d.items():
             attr = _WEIGHT_MAP.get(k.lower(), k)
-            if attr not in ('w_ea_product', 'w_surprise', 'w_f2_anticipatory', 'w_urgency', 'w_travel_cost', 'w_causal'):
+            _float_fields = ('w_ea_product', 'w_surprise', 'w_f2_anticipatory',
+                             'w_urgency', 'w_travel_cost', 'w_causal')
+            _str_fields   = ('combination_rule',)
+            if attr not in _float_fields and attr not in _str_fields:
                 raise ValueError(
                     f"Unknown weight key '{k}'. "
                     f"Valid short keys: {list(_WEIGHT_MAP)}; "
-                    "full keys: w_ea_product, w_surprise, w_f2_anticipatory, w_urgency, w_travel_cost, w_causal."
+                    "full keys: w_ea_product, w_surprise, w_f2_anticipatory, "
+                    "w_urgency, w_travel_cost, w_causal, combination_rule."
                 )
-            kwargs[attr] = float(v)
+            kwargs[attr] = str(v) if attr in _str_fields else float(v)
         return cls(**kwargs)

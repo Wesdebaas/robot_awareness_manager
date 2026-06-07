@@ -43,10 +43,11 @@ class AwarenessManager:
 
         Formula 3 - Utility Saturation:  refresh(n) = 1 - e^(-δ(n) x T)
 
-    where δ(n) is the concept's decay rate and T is the observation interval.
-    This calibrates the refresh amount to the drift accumulated since the last
-    observation: slow-decaying concepts get a small refresh, fast-decaying ones
-    get a larger one - each observation exactly compensates for what was lost.
+    where δ(n) is the concept's decay rate and T is the expected observation period
+    (observation_interval). This proportionally calibrates the refresh to the expected
+    drift: slow-decaying concepts get a small refresh, fast-decaying ones a larger one.
+    The formula does not exactly compensate drift (refresh = 1−e^{−δT} < δT for all δT>0);
+    it is order-matched to drift so that both grow monotonically with δ and T.
 
     Formula 2 - Anticipatory Horizon:
         A_combined(c) = A_current(c) + Σ_i [ e^{-λ x Δt_i} x A_i(c) ]
@@ -56,9 +57,10 @@ class AwarenessManager:
 
     Formula 4 - Quadratic Cost Constraint:
         depth = √B - 1
-    The number of graph nodes reachable within depth d grows as (1+d)². Given
-    memory budget B, the maximum search depth is √B - 1, replacing the fixed
-    max_distance with a resource-derived bound.
+    For sparse graphs with low branching factor, reachable nodes grow at most
+    as (1+d)²; this is used as a conservative upper bound to derive the budget-depth
+    formula. Given memory budget B, the maximum search depth is √B - 1, replacing
+    the fixed max_distance with a resource-derived bound.
 
     Priority formula (see PriorityWeights for weights):
         P(c)     = w_ea × (E(c) × A_mission(c)) + w_surprise × prediction_error(c)
@@ -99,10 +101,14 @@ class AwarenessManager:
                                        Ignored when memory_budget is set.
             budget:                    Maximum concepts to schedule per tick (top-N).
                                        Constrains both class and instance concepts.
-            observation_interval:      Expected seconds between observations (T in
-                                       Formula 3). Should match the caller's cadence
-                                       so the refresh amount equals the accumulated
-                                       drift.
+            observation_interval:      T in Formula 3's refresh calibration:
+                                       refresh = 1 − e^{−δ × T}. This is NOT the
+                                       actual inter-observation time — the AM
+                                       schedules and observes every tick. T is a
+                                       calibration constant: set it to the expected
+                                       round-robin period (budget / N concepts) so
+                                       the refresh magnitude is appropriate for the
+                                       anticipated drift between visits.
             lambda_horizon:            λ in Formula 2. Controls how quickly the
                                        anticipatory discount decays with time-to-goal.
                                        Higher values mean only near-future goals
@@ -636,7 +642,11 @@ class AwarenessManager:
         ) -> float:
             a_ea = min(1.0, a_mission + a_surprise)
             if use_f5:
-                p_ea = pw.w_ea_product * (e * a_ea if e > τ else 0.0)
+                if e > τ:
+                    raw = (e + a_ea) if pw.combination_rule == 'additive' else (e * a_ea)
+                else:
+                    raw = 0.0
+                p_ea = pw.w_ea_product * raw
             else:
                 p_ea = pw.w_ea_product * a_ea
             p_surprise = pw.w_surprise * prediction_error
@@ -809,12 +819,13 @@ class AwarenessManager:
                 "ld": self._fc.use_learnable_decay,
             },
             "priority_weights": {
-                "w_ea":     self._pw.w_ea_product,
-                "w_surp":   self._pw.w_surprise,
-                "w_f2":     self._pw.w_f2_anticipatory,
-                "w_urg":    self._pw.w_urgency,
-                "w_tc":     self._pw.w_travel_cost,
-                "w_causal": self._pw.w_causal,
+                "w_ea":            self._pw.w_ea_product,
+                "w_surp":          self._pw.w_surprise,
+                "w_f2":            self._pw.w_f2_anticipatory,
+                "w_urg":           self._pw.w_urgency,
+                "w_tc":            self._pw.w_travel_cost,
+                "w_causal":        self._pw.w_causal,
+                "combination_rule":self._pw.combination_rule,
             },
         }
 
